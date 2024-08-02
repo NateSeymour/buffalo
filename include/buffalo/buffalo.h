@@ -1,6 +1,7 @@
 #ifndef BUFFALO_H
 #define BUFFALO_H
 
+#include <algorithm>
 #include <vector>
 #include <deque>
 #include <optional>
@@ -28,6 +29,7 @@ namespace buffalo
     template<typename T, typename ValueType>
     class ProductionRule;
 #pragma endregion
+
 #pragma region std::visit Hackery
     /**
      * Helper for std::visit provided by Andreas Fertig.
@@ -54,6 +56,7 @@ namespace buffalo
     template<class... Ts>
     overload(Ts...) -> overload<Ts...>;
 #pragma endregion
+
 #pragma region Error Types
     class Error
     {
@@ -265,33 +268,27 @@ namespace buffalo
     };
 
     template<typename T, typename ValueType>
-    class ProductionRuleList
+    class NonTerminal
     {
         friend class Parser<T, ValueType>;
-        friend class NonTerminal<T, ValueType>;
 
     protected:
         std::vector<ProductionRule<T, ValueType>> rules_;
 
     public:
-        ProductionRuleList<T, ValueType> &operator|(ProductionRule<T, ValueType> const &rhs)
+        NonTerminal<T, ValueType> &operator|(ProductionRule<T, ValueType> const &rhs)
         {
             this->rules_.push_back(rhs);
             return *this;
         }
 
-        ProductionRuleList(std::initializer_list<ProductionRule<T, ValueType>> const &rules)
-        {
-            for(auto const &rule : rules)
-            {
-                this->rules_.push_back(rule);
-            }
-        }
+        NonTerminal(ProductionRule<T, ValueType> const &rule) : rules_({rule}) {}
+        NonTerminal(std::initializer_list<ProductionRule<T, ValueType>> const &rules) : rules_(rules) {}
     };
 
 #pragma region ProductionRule Composition Functions
     template<typename T, typename ValueType>
-    ProductionRuleList<T, ValueType> operator+(Terminal<T, ValueType> &lhs, Terminal<T, ValueType> &rhs)
+    ProductionRule<T, ValueType> operator+(Terminal<T, ValueType> &lhs, Terminal<T, ValueType> &rhs)
     {
         return ProductionRule(lhs) + rhs;
     }
@@ -315,28 +312,17 @@ namespace buffalo
     }
 
     template<typename T, typename ValueType>
-    ProductionRuleList<T, ValueType> operator|(ProductionRule<T, ValueType> const &lhs, ProductionRule<T, ValueType> const &rhs)
+    NonTerminal<T, ValueType> operator|(ProductionRule<T, ValueType> const &lhs, ProductionRule<T, ValueType> const &rhs)
     {
         return {lhs, rhs};
     }
 #pragma endregion
 
     template<typename T, typename ValueType>
-    class NonTerminal
-    {
-        friend class Parser<T, ValueType>;
-
-    protected:
-        ProductionRuleList<T, ValueType> production_rules_;
-
-    public:
-        NonTerminal(ProductionRuleList<T, ValueType> const &production_rules) : production_rules_(production_rules) {}
-        NonTerminal(ProductionRule<T, ValueType> const &production_rule) : production_rules_({ production_rule }) {}
-    };
-
-    template<typename T, typename ValueType>
     class Parser
     {
+        using SymbolType = std::variant<Terminal<T, ValueType>*, NonTerminal<T, ValueType>*>;
+
         Tokenizer<T, ValueType> const &tokenizer_;
         NonTerminal<T, ValueType> const &start_;
 
@@ -349,10 +335,25 @@ namespace buffalo
 
         struct Branch
         {
-            ProductionRule<T, ValueType> const &rule;
+            ProductionRule<T, ValueType> const *rule;
             int index;
 
-            Branch(ProductionRule<T, ValueType> const &rule, int index) : rule(rule), index(index) {};
+            bool FullyMatched()
+            {
+                return this->index >= this->rule->parse_sequence_.size() - 1;
+            }
+
+            SymbolType const &NextSymbol()
+            {
+                return this->rule->parse_sequence_[this->index];
+            }
+
+            Branch Advance()
+            {
+                return Branch(this->rule, this->index + 1);
+            }
+
+            Branch(ProductionRule<T, ValueType> const *rule, int index) : rule(rule), index(index) {};
         };
 
         struct State
@@ -361,23 +362,25 @@ namespace buffalo
 
             void Append(State const &state)
             {
-                this->branches.insert_range(this->branches.end(), state.branches);
+                this->branches.insert_range(branches.end(), state.branches);
             }
 
             static State Close(NonTerminal<T, ValueType> const &nonterminal, int index = 0)
             {
                 State state;
 
-                for(ProductionRule<T, ValueType> const &rule : nonterminal.production_rules_.rules_)
+                for(ProductionRule<T, ValueType> const &rule : nonterminal.rules_)
                 {
-                    state.branches.emplace_back(rule, index);
+                    state.branches.emplace_back(&rule, index);
 
                     if (rule.parse_sequence_.size() > index)
                     {
                         std::visit(overload{
-                            [&](NonTerminal<T, ValueType> *nonterminal)
+                            [&](NonTerminal<T, ValueType> *sequenced_nonterminal)
                             {
-                                state.Append(State::Close(*nonterminal));
+                                if(sequenced_nonterminal == &nonterminal) return;
+
+                                state.Append(State::Close(*sequenced_nonterminal));
                             },
                             [](Terminal<T, ValueType> *none) {},
                         }, rule.parse_sequence_[index]);
@@ -410,49 +413,12 @@ namespace buffalo
 
         Parser(Tokenizer<T, ValueType> const &tokenizer, NonTerminal<T, ValueType> const &start) : tokenizer_(tokenizer), start_(start)
         {
-            using LookaheadType = std::variant<Terminal<T, ValueType>*, NonTerminal<T, ValueType>*>;
 
             // Parser table generation
             this->states_.push_back(State::Close(start));
-            for(auto &state : this->states_)
+            for(int i = 0; i < this->states_.size(); i++)
             {
-                // Generate list of every possible following symbol
-                std::vector<LookaheadType> follows;
-                for(auto const &branch : state.branches)
-                {
-                    if(branch.index < branch.rule.parse_sequence_.size() + 1)
-                    {
-                        // TODO: generate "shift" rule
-                        follows.push_back(branch.rule.parse_sequence_[branch.index]);
-                    }
-                    else
-                    {
-                        // TODO: generate "reduce" rule
-                    }
-                }
 
-                // Generate a new state for each following symbol
-                for(auto const &follow : follows)
-                {
-                    State &follow_state = this->states_.emplace_back();
-
-                    for(auto const &branch : state.branches)
-                    {
-                        if(branch.rule.parse_sequence_[branch.index] == follow)
-                        {
-                            Branch &new_branch = follow_state.branches.emplace_back(branch.rule, branch.index + 1);
-
-                            // Close nonterminals if exist at parsing location
-                            std::visit(overload{
-                                [&](NonTerminal<T, ValueType> *nonterminal)
-                                {
-                                    follow_state.Append(State::Close(*nonterminal));
-                                },
-                                [](Terminal<T, ValueType> *none) {},
-                            }, new_branch.rule.parse_sequence_[new_branch.index]);
-                        }
-                    }
-                }
             }
         }
     };
