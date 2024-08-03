@@ -338,17 +338,17 @@ namespace buffalo
             ProductionRule<T, ValueType> const *rule;
             int index;
 
-            bool FullyMatched()
+            bool FullyMatched() const
             {
-                return this->index >= this->rule->parse_sequence_.size() - 1;
+                return this->index > this->rule->parse_sequence_.size() - 1;
             }
 
-            SymbolType const &NextSymbol()
+            SymbolType const &NextSymbol() const
             {
                 return this->rule->parse_sequence_[this->index];
             }
 
-            Branch Advance()
+            Branch Advance() const
             {
                 return Branch(this->rule, this->index + 1);
             }
@@ -365,30 +365,42 @@ namespace buffalo
                 this->branches.insert_range(branches.end(), state.branches);
             }
 
-            static State Close(NonTerminal<T, ValueType> const &nonterminal, int index = 0)
+            void Close(NonTerminal<T, ValueType> const *except = nullptr)
             {
-                State state;
-
-                for(ProductionRule<T, ValueType> const &rule : nonterminal.rules_)
+                for(auto const &branch : this->branches)
                 {
-                    state.branches.emplace_back(&rule, index);
-
-                    if (rule.parse_sequence_.size() > index)
+                    if(!branch.FullyMatched())
                     {
                         std::visit(overload{
-                            [&](NonTerminal<T, ValueType> *sequenced_nonterminal)
+                            [&](NonTerminal<T, ValueType> *nonterminal)
                             {
-                                if(sequenced_nonterminal == &nonterminal) return;
+                                if(nonterminal == except) return;
 
-                                state.Append(State::Close(*sequenced_nonterminal));
+                                State state(*nonterminal);
+                                state.Close(nonterminal);
+
+                                this->Append(state);
                             },
                             [](Terminal<T, ValueType> *none) {},
-                        }, rule.parse_sequence_[index]);
+                        }, branch.NextSymbol());
                     }
                 }
-
-                return state;
             }
+
+            State() = default;
+
+            explicit State(NonTerminal<T, ValueType> const &nonterminal, int index = 0)
+            {
+                for(ProductionRule<T, ValueType> const &rule : nonterminal.rules_)
+                {
+                    this->branches.emplace_back(&rule, index);
+                }
+            }
+        };
+
+        struct Transition
+        {
+
         };
 
         std::vector<State> states_;
@@ -413,12 +425,45 @@ namespace buffalo
 
         Parser(Tokenizer<T, ValueType> const &tokenizer, NonTerminal<T, ValueType> const &start) : tokenizer_(tokenizer), start_(start)
         {
-
             // Parser table generation
-            this->states_.push_back(State::Close(start));
+            auto &start_state = this->states_.emplace_back(start);
+            start_state.Close();
+
             for(int i = 0; i < this->states_.size(); i++)
             {
+                // Find all possible lookaheads for current state
+                std::vector<SymbolType> lookaheads;
+                for(auto const &branch : this->states_[i].branches)
+                {
+                    if(!branch.FullyMatched())
+                    {
+                        SymbolType lookahead = branch.NextSymbol();
 
+                        if(std::find(lookaheads.begin(), lookaheads.end(), lookahead) != lookaheads.end()) continue;
+
+                        lookaheads.push_back(lookahead);
+                    }
+                    else
+                    {
+                        // TODO: reduce!
+                    }
+                }
+
+                // Generate a new state for each lookahead
+                for(auto const &lookahead : lookaheads)
+                {
+                    State &state = this->states_.emplace_back();
+
+                    for(auto const &branch : this->states_[i].branches)
+                    {
+                        if(!branch.FullyMatched() && branch.NextSymbol() == lookahead)
+                        {
+                            state.branches.push_back(branch.Advance());
+                        }
+                    }
+
+                    state.Close();
+                }
             }
         }
     };

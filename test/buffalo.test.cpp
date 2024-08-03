@@ -35,18 +35,20 @@ buffalo::DefineTerminal<TerminalType, ValueType, R"(\s*$)", double> END(tokenize
     return 0.0;
 });
 
-buffalo::NonTerminal<TerminalType, ValueType> expression
-    = (expression + OPERATOR + expression)<=>[](auto &$)
-    {
-        return std::get<double>($[0]) + std::get<double>($[2]);
-    }
-    | buffalo::ProductionRule(NUMBER) <=> [](auto &$)
+buffalo::NonTerminal<TerminalType, ValueType> atomic
+    = buffalo::ProductionRule(NUMBER) <=> [](auto &$)
     {
         return std::get<double>($[0]);
     }
     | buffalo::ProductionRule(IDENTIFIER) <=> [](auto &$)
     {
         return 0.0;
+    };
+
+buffalo::NonTerminal<TerminalType, ValueType> expression
+    = (expression + OPERATOR + atomic)<=>[](auto &$)
+    {
+        return std::get<double>($[0]) + std::get<double>($[2]);
     };
 
 buffalo::NonTerminal<TerminalType, ValueType> program
