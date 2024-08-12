@@ -8,6 +8,8 @@ enum class TerminalType
     IDENTIFIER,
     KEYWORD,
     OPERATOR,
+    LEFT,
+    RIGHT,
     SYMBOL,
     END,
 };
@@ -26,29 +28,18 @@ buffalo::DefineTerminal<TerminalType, ValueType, R"(\+|\-|\*|\/)", std::string> 
     return std::string(tok.raw);
 });
 
-buffalo::DefineTerminal<TerminalType, ValueType, R"([a-zA-Z\d]+)", std::string> IDENTIFIER(tokenizer, TerminalType::IDENTIFIER, [](auto tok)
-{
-    return std::string(tok.raw);
-});
-
 buffalo::DefineTerminal<TerminalType, ValueType, R"(\s*$)", double> END(tokenizer, TerminalType::END, [](auto tok) {
     return 0.0;
 });
 
-buffalo::NonTerminal<TerminalType, ValueType> atomic
-    = buffalo::ProductionRule(NUMBER) <=> [](auto &$)
-    {
-        return std::get<double>($[0]);
-    }
-    | buffalo::ProductionRule(IDENTIFIER) <=> [](auto &$)
-    {
-        return 0.0;
-    };
-
 buffalo::NonTerminal<TerminalType, ValueType> expression
-    = (expression + OPERATOR + atomic)<=>[](auto &$)
+    = (expression + OPERATOR + NUMBER)<=>[](auto &$)
     {
         return std::get<double>($[0]) + std::get<double>($[2]);
+    }
+    | buffalo::ProductionRule(NUMBER)<=>[](auto &$)
+    {
+        return std::get<double>($[0]);
     };
 
 buffalo::NonTerminal<TerminalType, ValueType> program
@@ -57,9 +48,9 @@ buffalo::NonTerminal<TerminalType, ValueType> program
         return std::get<double>($[0]);
     };
 
-TEST(Parser, BasicParsing)
+TEST(Buffalo, Calculator)
 {
-    buffalo::Parser<TerminalType, ValueType> p(tokenizer, program);
+    buffalo::Parser<TerminalType, ValueType> calculator(tokenizer, program);
 
-    //ASSERT_EQ(81.5, std::get<double>(result));
+    // ASSERT_EQ(12.5, *calculator.Parse("11.5 + 1"));
 }

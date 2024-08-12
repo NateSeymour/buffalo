@@ -177,7 +177,7 @@ namespace buffalo
             this->terminals_.push_back(terminal);
         }
 
-        TokenStream Stream(std::string input)
+        TokenStream Stream(std::string_view input) const
         {
             return TokenStream(*this, input);
         }
@@ -333,72 +333,7 @@ namespace buffalo
             kAccept,
         };
 
-        struct Branch
-        {
-            ProductionRule<T, ValueType> const *rule;
-            int index;
-
-            bool FullyMatched() const
-            {
-                return this->index > this->rule->parse_sequence_.size() - 1;
-            }
-
-            SymbolType const &NextSymbol() const
-            {
-                return this->rule->parse_sequence_[this->index];
-            }
-
-            Branch Advance() const
-            {
-                return Branch(this->rule, this->index + 1);
-            }
-
-            Branch(ProductionRule<T, ValueType> const *rule, int index) : rule(rule), index(index) {};
-        };
-
-        struct State
-        {
-            std::vector<Branch> branches;
-
-            void Append(State const &state)
-            {
-                this->branches.insert_range(branches.end(), state.branches);
-            }
-
-            void Close(NonTerminal<T, ValueType> const *except = nullptr)
-            {
-                for(auto const &branch : this->branches)
-                {
-                    if(!branch.FullyMatched())
-                    {
-                        std::visit(overload{
-                            [&](NonTerminal<T, ValueType> *nonterminal)
-                            {
-                                if(nonterminal == except) return;
-
-                                State state(*nonterminal);
-                                state.Close(nonterminal);
-
-                                this->Append(state);
-                            },
-                            [](Terminal<T, ValueType> *none) {},
-                        }, branch.NextSymbol());
-                    }
-                }
-            }
-
-            State() = default;
-
-            explicit State(NonTerminal<T, ValueType> const &nonterminal, int index = 0)
-            {
-                for(ProductionRule<T, ValueType> const &rule : nonterminal.rules_)
-                {
-                    this->branches.emplace_back(&rule, index);
-                }
-            }
-        };
-
-        struct Transition
+        class State
         {
 
         };
@@ -425,46 +360,7 @@ namespace buffalo
 
         Parser(Tokenizer<T, ValueType> const &tokenizer, NonTerminal<T, ValueType> const &start) : tokenizer_(tokenizer), start_(start)
         {
-            // Parser table generation
-            auto &start_state = this->states_.emplace_back(start);
-            start_state.Close();
 
-            for(int i = 0; i < this->states_.size(); i++)
-            {
-                // Find all possible lookaheads for current state
-                std::vector<SymbolType> lookaheads;
-                for(auto const &branch : this->states_[i].branches)
-                {
-                    if(!branch.FullyMatched())
-                    {
-                        SymbolType lookahead = branch.NextSymbol();
-
-                        if(std::find(lookaheads.begin(), lookaheads.end(), lookahead) != lookaheads.end()) continue;
-
-                        lookaheads.push_back(lookahead);
-                    }
-                    else
-                    {
-                        // TODO: reduce!
-                    }
-                }
-
-                // Generate a new state for each lookahead
-                for(auto const &lookahead : lookaheads)
-                {
-                    State &state = this->states_.emplace_back();
-
-                    for(auto const &branch : this->states_[i].branches)
-                    {
-                        if(!branch.FullyMatched() && branch.NextSymbol() == lookahead)
-                        {
-                            state.branches.push_back(branch.Advance());
-                        }
-                    }
-
-                    state.Close();
-                }
-            }
         }
     };
 }
