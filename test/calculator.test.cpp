@@ -2,47 +2,40 @@
 #include <variant>
 #include <buffalo/buffalo.h>
 
-enum class TerminalType
-{
-    NUMBER,
-    IDENTIFIER,
-    KEYWORD,
-    OPERATOR,
-    LEFT,
-    RIGHT,
-    SYMBOL,
-    END,
-};
+using ValueType = std::variant<double, std::string>;
+using Calculator = buffalo::Grammar<"Calculator", ValueType>;
 
-typedef std::variant<double, std::string> ValueType;
-
-buffalo::Tokenizer<TerminalType, ValueType> tokenizer;
-
-buffalo::DefineTerminal<TerminalType, ValueType, R"(\-?\d+(\.\d+)?)", double> NUMBER(tokenizer, TerminalType::NUMBER, [](auto tok)
-{
+/*
+ * Terminals & Tokenizer
+ */
+buffalo::Terminal<Calculator, R"((\-?\d+(\.\d+)?))", double> NUMBER([](auto &tok){
     return std::stod(std::string(tok.raw));
 });
 
-buffalo::DefineTerminal<TerminalType, ValueType, R"(\+|\-|\*|\/)", std::string> OPERATOR(tokenizer, TerminalType::OPERATOR, [](auto tok)
-{
+buffalo::Terminal<Calculator, R"(\+|\-|\*|\/)", std::string> OPERATOR([](auto &tok){
     return std::string(tok.raw);
 });
 
-buffalo::DefineTerminal<TerminalType, ValueType, R"(\s*$)", double> END(tokenizer, TerminalType::END, [](auto tok) {
+buffalo::Terminal<Calculator, R"(\s*$)", double> END([](auto &tok){
     return 0.0;
 });
 
-buffalo::NonTerminal<TerminalType, ValueType> expression
+buffalo::Tokenizer<Calculator> tok({&NUMBER, &OPERATOR, &END});
+
+/*
+ * Non-Terminals
+ */
+buffalo::NonTerminal<Calculator> expression
     = (expression + OPERATOR + NUMBER)<=>[](auto &$)
     {
-        return std::get<double>($[0]) + std::get<double>($[2]);
+        return std::get<double>($[0]) + NUMBER($[2]);
     }
     | buffalo::ProductionRule(NUMBER)<=>[](auto &$)
     {
-        return std::get<double>($[0]);
+        return NUMBER($[0]);
     };
 
-buffalo::NonTerminal<TerminalType, ValueType> program
+buffalo::NonTerminal<Calculator> program
     = (expression + END)<=>[](auto &$)
     {
         return std::get<double>($[0]);
@@ -50,7 +43,5 @@ buffalo::NonTerminal<TerminalType, ValueType> program
 
 TEST(Buffalo, Calculator)
 {
-    buffalo::Parser<TerminalType, ValueType> calculator(tokenizer, program);
-
-    // ASSERT_EQ(12.5, *calculator.Parse("11.5 + 1"));
+    buffalo::Parser calculator(tok, program);
 }

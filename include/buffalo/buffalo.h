@@ -19,15 +19,28 @@
 
 namespace buffalo
 {
+    using id_t = std::size_t;
+
+#pragma region Concepts
+    template<typename T>
+    concept IGrammar = requires(T)
+    {
+        typename T::ValueType;
+        typename T::TransductorType;
+        typename T::SemanticReasonerType;
+        { T::SymbolId() } -> std::same_as<id_t>;
+    };
+#pragma endregion
+
 #pragma region Forwards Decls
-    template<typename T, typename ValueType>
+    template<IGrammar G>
     class Parser;
 
-    template<typename T, typename ValueType>
+    template<IGrammar G>
     class NonTerminal;
 
-    template<typename T, typename ValueType>
-    class ProductionRule;
+    template<IGrammar G>
+    class TerminalInterface;
 #pragma endregion
 
 #pragma region std::visit Hackery
@@ -75,48 +88,95 @@ namespace buffalo
     };
 #pragma endregion
 
-    template<typename T>
     struct Token
     {
-        T type;
+        id_t type;
         int begin = -1;
         int end = -1;
         std::string_view raw;
     };
 
-    template<typename T, typename ValueType>
-    class Terminal
+    template<ctll::fixed_string name, typename T>
+    class Grammar
     {
-        friend class ProductionRule<T, ValueType>;
+    public:
+        // Forward decls
+        class Terminal;
 
     protected:
-        std::function<ValueType(Token<T> const&)> semantic_reasoner_;
+        static inline id_t symbol_count = 0;
 
     public:
-        typedef ValueType value_type;
-        const T terminal_type;
+        using ValueType = T;
+        using TransductorType = std::function<T(std::vector<T> const&)>;
+        using SemanticReasonerType = std::function<T(Token const&)>;
 
-        virtual constexpr std::optional<Token<T>> Match(std::string_view input) const = 0;
-
-        Terminal(T terminal_type, std::function<ValueType(Token<T> const&)> semantic_reasoner) : terminal_type(terminal_type), semantic_reasoner_(semantic_reasoner) {}
+        static id_t SymbolId()
+        {
+            return symbol_count++;
+        }
     };
 
-    template<typename T, typename ValueType>
+    template<IGrammar G>
+    class TerminalInterface
+    {
+    protected:
+        G::SemanticReasonerType semantic_reasoner_;
+
+    public:
+        const id_t id = G::SymbolId();
+
+        [[nodiscard]] virtual constexpr std::optional<Token> Match(std::string_view input) const = 0;
+
+        explicit TerminalInterface(G::SemanticReasonerType semantic_reasoner) : semantic_reasoner_(semantic_reasoner) {}
+    };
+
+    template<IGrammar G, ctll::fixed_string pattern, typename SemanticType>
+    class Terminal : public TerminalInterface<G>
+    {
+    public:
+        constexpr std::optional<Token> Match(std::string_view input) const override
+        {
+            auto match = ctre::starts_with<pattern>(input);
+            if(match)
+            {
+                auto raw = match.to_view();
+
+                return Token {
+                        .type = this->id,
+                        .begin = 0,
+                        .end = (int)raw.size(),
+                        .raw = raw,
+                };
+            }
+
+            return std::nullopt;
+        }
+
+        SemanticType operator()(G::ValueType const &value)
+        {
+            return std::get<SemanticType>(value);
+        }
+
+        Terminal(G::SemanticReasonerType semantic_reasoner) : TerminalInterface<G>(semantic_reasoner) {}
+    };
+
+    template<IGrammar G>
     class Tokenizer
     {
     protected:
-        std::vector<Terminal<T, ValueType> *> terminals_;
+        const std::initializer_list<TerminalInterface<G> const *> terminals_;
 
     public:
         class TokenStream
         {
-            Tokenizer<T, ValueType> const &tokenizer_;
+            Tokenizer<G> const &tokenizer_;
             std::string_view input_;
-            std::deque<Token<T>> buffer_;
+            std::deque<Token> buffer_;
             std::size_t index_ = 0;
 
         public:
-            std::expected<Token<T>, LexError> ReadNext()
+            std::expected<Token, LexError> ReadNext()
             {
                 // Clear whitespace
                 while(std::isspace(this->input_[0]))
@@ -143,11 +203,11 @@ namespace buffalo
                 return std::unexpected("End of token stream!");
             }
 
-            std::expected<Token<T>, LexError> Consume()
+            std::expected<Token, LexError> Consume()
             {
                 if(!this->buffer_.empty())
                 {
-                    Token<T> token = this->buffer_[0];
+                    Token token = this->buffer_[0];
                     this->buffer_.pop_front();
 
                     return token;
@@ -156,7 +216,7 @@ namespace buffalo
                 return this->ReadNext();
             }
 
-            std::expected<Token<T>, LexError> Peek(std::size_t lookahead = 0)
+            std::expected<Token, LexError> Peek(std::size_t lookahead = 0)
             {
                 // Fill buffer to desired location
                 while(this->buffer_.size() <= lookahead)
@@ -167,164 +227,125 @@ namespace buffalo
                 return this->buffer_[lookahead];
             }
 
-            TokenStream(Tokenizer<T, ValueType> const &tokenizer, std::string_view input) : tokenizer_(tokenizer), input_(input) {}
+            TokenStream(Tokenizer<G> const &tokenizer, std::string_view input) : tokenizer_(tokenizer), input_(input) {}
         };
-
-        friend class Tokenizer<T, ValueType>::TokenStream;
-
-        void RegisterTerminal(Terminal<T, ValueType> *terminal)
-        {
-            this->terminals_.push_back(terminal);
-        }
 
         TokenStream Stream(std::string_view input) const
         {
             return TokenStream(*this, input);
         }
+
+        Tokenizer(std::initializer_list<TerminalInterface<G> const *> terminals) : terminals_(terminals) {}
     };
 
-    template<typename T, typename ValueType, ctll::fixed_string pattern, typename SemanticType>
-    class DefineTerminal : public Terminal<T, ValueType>
-    {
-    public:
-        constexpr std::optional<Token<T>> Match(std::string_view input) const override
-        {
-            auto match = ctre::starts_with<pattern>(input);
-            if(match)
-            {
-                auto raw = match.to_view();
-
-                return Token<T> {
-                        .type = this->terminal_type,
-                        .begin = 0,
-                        .end = (int)raw.size(),
-                        .raw = raw,
-                };
-            }
-
-            return std::nullopt;
-        }
-
-        SemanticType operator()(ValueType const &value)
-        {
-            return std::get<SemanticType>(value);
-        }
-
-        DefineTerminal(Tokenizer<T, ValueType> &tokenizer, T terminal_type, std::function<ValueType(Token<T> const&)> semantic_reasoner) : Terminal<T, ValueType>(terminal_type, semantic_reasoner)
-        {
-            tokenizer.RegisterTerminal(this);
-        }
-    };
-
-    template<typename T, typename ValueType>
+    template<IGrammar G>
     class ProductionRule
     {
-        friend class Parser<T, ValueType>;
-        friend class NonTerminal<T, ValueType>;
-        typedef std::function<ValueType(std::vector<ValueType> const&)> transductor_t;
+    public:
+        using SymbolType = std::variant<TerminalInterface<G>*, NonTerminal<G>*>;
 
     protected:
-        std::optional<transductor_t> tranductor_ = std::nullopt;
+        std::optional<typename G::TransductorType> tranductor_ = std::nullopt;
 
-        std::vector<std::variant<Terminal<T, ValueType>*, NonTerminal<T, ValueType>*>> parse_sequence_;
+        std::vector<SymbolType> parse_sequence_;
 
     public:
         template<typename F>
-        ProductionRule<T, ValueType> &operator<=>(F transductor)
+        ProductionRule<G> &operator<=>(F transductor)
         {
             this->tranductor_ = transductor;
             return *this;
         }
 
-        ProductionRule<T, ValueType> &operator+(Terminal<T, ValueType> &rhs)
+        ProductionRule<G> &operator+(TerminalInterface<G> &rhs)
         {
             this->parse_sequence_.push_back(&rhs);
 
             return *this;
         }
 
-        ProductionRule<T, ValueType> &operator+(NonTerminal<T, ValueType> &rhs)
+        ProductionRule<G> &operator+(NonTerminal<G> &rhs)
         {
             this->parse_sequence_.push_back(&rhs);
 
             return *this;
         }
 
-        std::optional<ValueType> Produce(Tokenizer<T, ValueType>::TokenStream &stream)
+        std::optional<typename G::ValueType> Produce(Tokenizer<G>::TokenStream &stream)
         {
             //static_assert(false, "unimplemented");
             return std::nullopt;
         }
 
-        ProductionRule(Terminal<T, ValueType> &start)
+        ProductionRule(TerminalInterface<G> &start)
         {
             this->parse_sequence_.push_back(&start);
         }
 
-        ProductionRule(NonTerminal<T, ValueType> &start)
+        ProductionRule(NonTerminal<G> &start)
         {
             this->parse_sequence_.push_back(&start);
         }
     };
 
-    template<typename T, typename ValueType>
+    template<IGrammar G>
     class NonTerminal
     {
-        friend class Parser<T, ValueType>;
+        friend class Parser<G>;
 
     protected:
-        std::vector<ProductionRule<T, ValueType>> rules_;
+        std::vector<ProductionRule<G>> rules_;
 
     public:
-        NonTerminal<T, ValueType> &operator|(ProductionRule<T, ValueType> const &rhs)
+        const id_t id = G::SymbolId();
+
+        NonTerminal<G> &operator|(ProductionRule<G> const &rhs)
         {
             this->rules_.push_back(rhs);
             return *this;
         }
 
-        NonTerminal(ProductionRule<T, ValueType> const &rule) : rules_({rule}) {}
-        NonTerminal(std::initializer_list<ProductionRule<T, ValueType>> const &rules) : rules_(rules) {}
+        NonTerminal(ProductionRule<G> const &rule) : rules_({rule}) {}
+        NonTerminal(std::initializer_list<ProductionRule<G>> const &rules) : rules_(rules) {}
     };
 
 #pragma region ProductionRule Composition Functions
-    template<typename T, typename ValueType>
-    ProductionRule<T, ValueType> operator+(Terminal<T, ValueType> &lhs, Terminal<T, ValueType> &rhs)
+    template<IGrammar G>
+    ProductionRule<G> operator+(TerminalInterface<G> &lhs, TerminalInterface<G> &rhs)
     {
         return ProductionRule(lhs) + rhs;
     }
 
-    template<typename T, typename ValueType>
-    ProductionRule<T, ValueType> operator+(Terminal<T, ValueType> &lhs, NonTerminal<T, ValueType> *rhs)
+    template<IGrammar G>
+    ProductionRule<G> operator+(TerminalInterface<G> &lhs, NonTerminal<G> *rhs)
     {
         return ProductionRule(lhs) + rhs;
     }
 
-    template<typename T, typename ValueType>
-    ProductionRule<T, ValueType> operator+(NonTerminal<T, ValueType> &lhs, NonTerminal<T, ValueType> &rhs)
+    template<IGrammar G>
+    ProductionRule<G> operator+(NonTerminal<G> &lhs, NonTerminal<G> &rhs)
     {
         return ProductionRule(lhs) + rhs;
     }
 
-    template<typename T, typename ValueType>
-    ProductionRule<T, ValueType> operator+(NonTerminal<T, ValueType> &lhs, Terminal<T, ValueType> &rhs)
+    template<IGrammar G>
+    ProductionRule<G> operator+(NonTerminal<G> &lhs, TerminalInterface<G> &rhs)
     {
         return ProductionRule(lhs) + rhs;
     }
 
-    template<typename T, typename ValueType>
-    NonTerminal<T, ValueType> operator|(ProductionRule<T, ValueType> const &lhs, ProductionRule<T, ValueType> const &rhs)
+    template<IGrammar G>
+    NonTerminal<G> operator|(ProductionRule<G> const &lhs, ProductionRule<G> const &rhs)
     {
         return {lhs, rhs};
     }
 #pragma endregion
 
-    template<typename T, typename ValueType>
+    template<IGrammar G>
     class Parser
     {
-        using SymbolType = std::variant<Terminal<T, ValueType>*, NonTerminal<T, ValueType>*>;
-
-        Tokenizer<T, ValueType> const &tokenizer_;
-        NonTerminal<T, ValueType> const &start_;
+        Tokenizer<G> const &tokenizer_;
+        NonTerminal<G> const &start_;
 
         enum class ActionType
         {
@@ -348,9 +369,9 @@ namespace buffalo
          * @param input
          * @return
          */
-        std::expected<ValueType, ParseError> Parse(std::string_view input) const
+        std::expected<typename G::ValueType, ParseError> Parse(std::string_view input) const
         {
-            using StackType = std::variant<Token<T>, NonTerminal<T, ValueType>>;
+            using StackType = std::variant<Token, NonTerminal<G>>;
 
             auto stream = this->tokenizer_.Stream(input);
             std::stack<StackType> stack;
@@ -358,7 +379,7 @@ namespace buffalo
             // to shift we call stream.Next();
         }
 
-        Parser(Tokenizer<T, ValueType> const &tokenizer, NonTerminal<T, ValueType> const &start) : tokenizer_(tokenizer), start_(start)
+        Parser(Tokenizer<G> const &tokenizer, NonTerminal<G> const &start) : tokenizer_(tokenizer), start_(start)
         {
 
         }
