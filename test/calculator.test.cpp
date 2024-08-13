@@ -43,5 +43,5 @@ buffalo::NonTerminal<Calculator> program
 
 TEST(Buffalo, Calculator)
 {
-    buffalo::Parser calculator(tok, program);
+    buffalo::SLRParser calculator(tok, program);
 }

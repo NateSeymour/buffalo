@@ -37,6 +37,9 @@ namespace buffalo
     class Parser;
 
     template<IGrammar G>
+    class SLRParser;
+
+    template<IGrammar G>
     class NonTerminal;
 
     template<IGrammar G>
@@ -241,6 +244,9 @@ namespace buffalo
     template<IGrammar G>
     class ProductionRule
     {
+        friend class Parser<G>;
+        friend class SLRParser<G>;
+
     public:
         using SymbolType = std::variant<Terminal<G>*, NonTerminal<G>*>;
 
@@ -292,6 +298,7 @@ namespace buffalo
     class NonTerminal
     {
         friend class Parser<G>;
+        friend class SLRParser<G>;
 
     protected:
         std::vector<ProductionRule<G>> rules_;
@@ -344,6 +351,13 @@ namespace buffalo
     template<IGrammar G>
     class Parser
     {
+    public:
+        virtual std::expected<typename G::ValueType, ParseError> Parse(std::string_view input) const = 0;
+    };
+
+    template<IGrammar G>
+    class SLRParser : public Parser<G>
+    {
         using SymbolType = ProductionRule<G>::SymbolType;
 
         Tokenizer<G> const &tokenizer_;
@@ -375,6 +389,11 @@ namespace buffalo
             {
                 return Item(this->rule, this->index + 1);
             }
+
+            bool operator==(Item const &other)
+            {
+                return this->rule == other.rule && this->index == other.index;
+            }
         };
 
         struct State
@@ -384,7 +403,7 @@ namespace buffalo
 
             void Append(State const &state)
             {
-                this->branches.insert_range(items.end(), state.branches);
+                this->items.insert(items.end(), state.items.begin(), state.items.end());
             }
 
             void Close()
@@ -428,8 +447,8 @@ namespace buffalo
         struct Transition
         {
             Item from;
-            std::shared_ptr<State> to;
-            id_t on;
+            int state_id;
+            SymbolType on;
         };
 
         std::vector<Transition> transitions_;
@@ -439,11 +458,7 @@ namespace buffalo
         // void action_;
 
     public:
-        /**
-         * @param input
-         * @return
-         */
-        std::expected<typename G::ValueType, ParseError> Parse(std::string_view input) const
+        std::expected<typename G::ValueType, ParseError> Parse(std::string_view input) const override
         {
             using StackType = std::variant<Token, NonTerminal<G>>;
 
@@ -453,19 +468,67 @@ namespace buffalo
             // to shift we call stream.Next();
         }
 
-        Parser(Tokenizer<G> const &tokenizer, NonTerminal<G> const &start) : tokenizer_(tokenizer), start_(start)
+        SLRParser(Tokenizer<G> const &tokenizer, NonTerminal<G> const &start) : tokenizer_(tokenizer), start_(start)
         {
-            /*
-             * Steps:
-             *  1. Generate States
-             *  2.
-             */
             // Generate first state
             auto &first_state = this->states_.emplace_back(start);
             first_state.Close();
 
             for(int i = 0; i < this->states_.size(); i++)
             {
+                // Generate set of lookaheads
+                std::vector<SymbolType> lookahead_symbols;
+                for(auto const &item : this->states_[i].items)
+                {
+                    if(!item.FullyMatched())
+                    {
+                        // Skip if symbol already processed
+                        if(std::ranges::find(lookahead_symbols, item.NextSymbol()) != lookahead_symbols.end()) continue;
+
+                        lookahead_symbols.push_back(item.NextSymbol());
+                    }
+                    else
+                    {
+                        // TODO: For each terminal a in FOLLOW(A) -> REDUCE
+                    }
+                }
+
+                // Create new states
+                for(auto const &lookahead : lookahead_symbols)
+                {
+                    State new_state;
+
+                    for(auto const &item : this->states_[i].items)
+                    {
+                        // Check for existing transition
+                        auto item_matches_transition = [&](Transition t) {
+                            return t.from == item && t.on == lookahead;
+                        };
+
+                        if(auto it = std::ranges::find_if(this->transitions_, item_matches_transition); it != this->transitions_.end())
+                        {
+                            // Do proper rule processing
+                        }
+                        else
+                        {
+                            // Add item to state
+                            new_state.items.push_back(item.Advance());
+
+                            // Add transition to list
+                            this->transitions_.push_back({
+                                .from = item,
+                                .state_id = i + 1,
+                                .on = lookahead,
+                            });
+                        }
+                    }
+
+                    if(!new_state.items.empty())
+                    {
+                        new_state.Close();
+                        this->states_.push_back(new_state);
+                    }
+                }
             }
         }
     };
