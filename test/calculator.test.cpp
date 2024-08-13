@@ -8,15 +8,15 @@ using Calculator = buffalo::Grammar<"Calculator", ValueType>;
 /*
  * Terminals & Tokenizer
  */
-buffalo::Terminal<Calculator, R"((\-?\d+(\.\d+)?))", double> NUMBER([](auto &tok){
+buffalo::DefineTerminal<Calculator, R"((\-?\d+(\.\d+)?))", double> NUMBER([](auto &tok){
     return std::stod(std::string(tok.raw));
 });
 
-buffalo::Terminal<Calculator, R"(\+|\-|\*|\/)", std::string> OPERATOR([](auto &tok){
+buffalo::DefineTerminal<Calculator, R"(\+|\-|\*|\/)", std::string> OPERATOR([](auto &tok){
     return std::string(tok.raw);
 });
 
-buffalo::Terminal<Calculator, R"(\s*$)", double> END([](auto &tok){
+buffalo::DefineTerminal<Calculator, R"(\s*$)", double> END([](auto &tok){
     return 0.0;
 });
 

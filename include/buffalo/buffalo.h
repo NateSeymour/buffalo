@@ -40,7 +40,7 @@ namespace buffalo
     class NonTerminal;
 
     template<IGrammar G>
-    class TerminalInterface;
+    class Terminal;
 #pragma endregion
 
 #pragma region std::visit Hackery
@@ -118,7 +118,7 @@ namespace buffalo
     };
 
     template<IGrammar G>
-    class TerminalInterface
+    class Terminal
     {
     protected:
         G::SemanticReasonerType semantic_reasoner_;
@@ -128,11 +128,11 @@ namespace buffalo
 
         [[nodiscard]] virtual constexpr std::optional<Token> Match(std::string_view input) const = 0;
 
-        explicit TerminalInterface(G::SemanticReasonerType semantic_reasoner) : semantic_reasoner_(semantic_reasoner) {}
+        explicit Terminal(G::SemanticReasonerType semantic_reasoner) : semantic_reasoner_(semantic_reasoner) {}
     };
 
     template<IGrammar G, ctll::fixed_string pattern, typename SemanticType>
-    class Terminal : public TerminalInterface<G>
+    class DefineTerminal : public Terminal<G>
     {
     public:
         constexpr std::optional<Token> Match(std::string_view input) const override
@@ -158,14 +158,14 @@ namespace buffalo
             return std::get<SemanticType>(value);
         }
 
-        Terminal(G::SemanticReasonerType semantic_reasoner) : TerminalInterface<G>(semantic_reasoner) {}
+        DefineTerminal(G::SemanticReasonerType semantic_reasoner) : Terminal<G>(semantic_reasoner) {}
     };
 
     template<IGrammar G>
     class Tokenizer
     {
     protected:
-        const std::initializer_list<TerminalInterface<G> const *> terminals_;
+        const std::initializer_list<Terminal<G> const *> terminals_;
 
     public:
         class TokenStream
@@ -235,14 +235,14 @@ namespace buffalo
             return TokenStream(*this, input);
         }
 
-        Tokenizer(std::initializer_list<TerminalInterface<G> const *> terminals) : terminals_(terminals) {}
+        Tokenizer(std::initializer_list<Terminal<G> const *> terminals) : terminals_(terminals) {}
     };
 
     template<IGrammar G>
     class ProductionRule
     {
     public:
-        using SymbolType = std::variant<TerminalInterface<G>*, NonTerminal<G>*>;
+        using SymbolType = std::variant<Terminal<G>*, NonTerminal<G>*>;
 
     protected:
         std::optional<typename G::TransductorType> tranductor_ = std::nullopt;
@@ -257,7 +257,7 @@ namespace buffalo
             return *this;
         }
 
-        ProductionRule<G> &operator+(TerminalInterface<G> &rhs)
+        ProductionRule<G> &operator+(Terminal<G> &rhs)
         {
             this->parse_sequence_.push_back(&rhs);
 
@@ -277,7 +277,7 @@ namespace buffalo
             return std::nullopt;
         }
 
-        ProductionRule(TerminalInterface<G> &start)
+        ProductionRule(Terminal<G> &start)
         {
             this->parse_sequence_.push_back(&start);
         }
@@ -311,13 +311,13 @@ namespace buffalo
 
 #pragma region ProductionRule Composition Functions
     template<IGrammar G>
-    ProductionRule<G> operator+(TerminalInterface<G> &lhs, TerminalInterface<G> &rhs)
+    ProductionRule<G> operator+(Terminal<G> &lhs, Terminal<G> &rhs)
     {
         return ProductionRule(lhs) + rhs;
     }
 
     template<IGrammar G>
-    ProductionRule<G> operator+(TerminalInterface<G> &lhs, NonTerminal<G> *rhs)
+    ProductionRule<G> operator+(Terminal<G> &lhs, NonTerminal<G> *rhs)
     {
         return ProductionRule(lhs) + rhs;
     }
@@ -329,7 +329,7 @@ namespace buffalo
     }
 
     template<IGrammar G>
-    ProductionRule<G> operator+(NonTerminal<G> &lhs, TerminalInterface<G> &rhs)
+    ProductionRule<G> operator+(NonTerminal<G> &lhs, Terminal<G> &rhs)
     {
         return ProductionRule(lhs) + rhs;
     }
@@ -344,6 +344,8 @@ namespace buffalo
     template<IGrammar G>
     class Parser
     {
+        using SymbolType = ProductionRule<G>::SymbolType;
+
         Tokenizer<G> const &tokenizer_;
         NonTerminal<G> const &start_;
 
@@ -354,11 +356,83 @@ namespace buffalo
             kAccept,
         };
 
-        class State
+        struct Item
         {
+            ProductionRule<G> const *rule;
+            std::size_t index;
 
+            bool FullyMatched() const
+            {
+                return this->index > this->rule->parse_sequence_.size() - 1;
+            }
+
+            SymbolType const &NextSymbol() const
+            {
+                return this->rule->parse_sequence_[this->index];
+            }
+
+            Item Advance() const
+            {
+                return Item(this->rule, this->index + 1);
+            }
         };
 
+        struct State
+        {
+            std::optional<id_t> self = std::nullopt;
+            std::vector<Item> items;
+
+            void Append(State const &state)
+            {
+                this->branches.insert_range(items.end(), state.branches);
+            }
+
+            void Close()
+            {
+                for(auto const &item : this->items)
+                {
+                    if(!item.FullyMatched())
+                    {
+                        std::visit(overload{
+                                [&](NonTerminal<G> *nonterminal)
+                                {
+                                    if(this->self && nonterminal->id == *self) return;
+
+                                    State state(*nonterminal);
+                                    state.Close();
+
+                                    this->Append(state);
+                                },
+                                [](Terminal<G> *none) {},
+                        }, item.NextSymbol());
+                    }
+                }
+            }
+
+            State() = default;
+
+            State(NonTerminal<G> const &nonterminal)
+            {
+                this->self = nonterminal.id;
+
+                for(auto const &rule : nonterminal.rules_)
+                {
+                    this->items.push_back({
+                        .rule = &rule,
+                        .index = 0,
+                    });
+                }
+            }
+        };
+
+        struct Transition
+        {
+            Item from;
+            std::shared_ptr<State> to;
+            id_t on;
+        };
+
+        std::vector<Transition> transitions_;
         std::vector<State> states_;
 
         // void goto_;
@@ -381,7 +455,18 @@ namespace buffalo
 
         Parser(Tokenizer<G> const &tokenizer, NonTerminal<G> const &start) : tokenizer_(tokenizer), start_(start)
         {
+            /*
+             * Steps:
+             *  1. Generate States
+             *  2.
+             */
+            // Generate first state
+            auto &first_state = this->states_.emplace_back(start);
+            first_state.Close();
 
+            for(int i = 0; i < this->states_.size(); i++)
+            {
+            }
         }
     };
 }
