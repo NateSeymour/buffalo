@@ -2,6 +2,9 @@
 #include <variant>
 #include <buffalo/buffalo.h>
 
+/*
+ * Grammar Definition
+ */
 using ValueType = std::variant<double, std::string>;
 using Calculator = buffalo::Grammar<"Calculator", ValueType>;
 

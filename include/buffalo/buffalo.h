@@ -34,16 +34,19 @@ namespace buffalo
 
 #pragma region Forwards Decls
     template<IGrammar G>
+    struct LRState;
+
+    template<IGrammar G>
     class Parser;
 
     template<IGrammar G>
     class SLRParser;
 
     template<IGrammar G>
-    class NonTerminal;
+    class Terminal;
 
     template<IGrammar G>
-    class Terminal;
+    class NonTerminal;
 #pragma endregion
 
 #pragma region std::visit Hackery
@@ -120,25 +123,39 @@ namespace buffalo
         }
     };
 
+    enum class SymbolType
+    {
+        kTerminal,
+        kNonTerminal,
+    };
+
     template<IGrammar G>
-    class Terminal
+    class Symbol
+    {
+    public:
+        const id_t id = G::SymbolId();
+        const SymbolType symbol_type;
+
+        Symbol(SymbolType symbol_type) : symbol_type(symbol_type) {}
+    };
+
+    template<IGrammar G>
+    class Terminal : public Symbol<G>
     {
     protected:
         G::SemanticReasonerType semantic_reasoner_;
 
     public:
-        const id_t id = G::SymbolId();
-
         [[nodiscard]] virtual constexpr std::optional<Token> Match(std::string_view input) const = 0;
 
-        explicit Terminal(G::SemanticReasonerType semantic_reasoner) : semantic_reasoner_(semantic_reasoner) {}
+        explicit Terminal(G::SemanticReasonerType semantic_reasoner) : Symbol<G>(SymbolType::kTerminal), semantic_reasoner_(semantic_reasoner) {}
     };
 
     template<IGrammar G, ctll::fixed_string pattern, typename SemanticType>
     class DefineTerminal : public Terminal<G>
     {
     public:
-        constexpr std::optional<Token> Match(std::string_view input) const override
+        [[nodiscard]] constexpr std::optional<Token> Match(std::string_view input) const override
         {
             auto match = ctre::starts_with<pattern>(input);
             if(match)
@@ -156,12 +173,12 @@ namespace buffalo
             return std::nullopt;
         }
 
-        SemanticType operator()(G::ValueType const &value)
+        [[nodiscard]] SemanticType operator()(G::ValueType const &value)
         {
             return std::get<SemanticType>(value);
         }
 
-        DefineTerminal(G::SemanticReasonerType semantic_reasoner) : Terminal<G>(semantic_reasoner) {}
+        explicit DefineTerminal(G::SemanticReasonerType semantic_reasoner) : Terminal<G>(semantic_reasoner) {}
     };
 
     template<IGrammar G>
@@ -244,20 +261,18 @@ namespace buffalo
     template<IGrammar G>
     class ProductionRule
     {
+        friend struct LRState<G>;
         friend class Parser<G>;
         friend class SLRParser<G>;
-
-    public:
-        using SymbolType = std::variant<Terminal<G>*, NonTerminal<G>*>;
 
     protected:
         std::optional<typename G::TransductorType> tranductor_ = std::nullopt;
 
-        std::vector<SymbolType> parse_sequence_;
+        std::vector<Symbol<G>*> parse_sequence_;
 
     public:
         template<typename F>
-        ProductionRule<G> &operator<=>(F transductor)
+        ProductionRule<G> operator<=>(F transductor)
         {
             this->tranductor_ = transductor;
             return *this;
@@ -295,8 +310,9 @@ namespace buffalo
     };
 
     template<IGrammar G>
-    class NonTerminal
+    class NonTerminal : public Symbol<G>
     {
+        friend struct LRState<G>;
         friend class Parser<G>;
         friend class SLRParser<G>;
 
@@ -304,16 +320,14 @@ namespace buffalo
         std::vector<ProductionRule<G>> rules_;
 
     public:
-        const id_t id = G::SymbolId();
-
         NonTerminal<G> &operator|(ProductionRule<G> const &rhs)
         {
             this->rules_.push_back(rhs);
             return *this;
         }
 
-        NonTerminal(ProductionRule<G> const &rule) : rules_({rule}) {}
-        NonTerminal(std::initializer_list<ProductionRule<G>> const &rules) : rules_(rules) {}
+        NonTerminal(ProductionRule<G> const &rule) : Symbol<G>(SymbolType::kNonTerminal), rules_({rule}) {}
+        NonTerminal(std::initializer_list<ProductionRule<G>> const &rules) : Symbol<G>(SymbolType::kNonTerminal), rules_(rules) {}
     };
 
 #pragma region ProductionRule Composition Functions
@@ -348,6 +362,112 @@ namespace buffalo
     }
 #pragma endregion
 
+    enum class ActionType
+    {
+        kShift,
+        kReduce,
+        kGoto,
+        kAccept,
+    };
+
+    struct Action
+    {
+        ActionType type;
+    };
+
+    template<IGrammar G>
+    struct LRState
+    {
+        struct Item
+        {
+            ProductionRule<G> const *rule;
+            int position;
+
+            [[nodiscard]] bool Complete() const
+            {
+                return this->position >= this->rule->parse_sequence_.size();
+            }
+
+            [[nodiscard]] Item Advance() const
+            {
+                return Item(this->rule, this->position + 1);
+            }
+
+            [[nodiscard]] Symbol<G> *NextSymbol() const
+            {
+                return this->rule->parse_sequence_[this->position];
+            }
+
+            Item() = delete;
+
+            explicit Item(ProductionRule<G> const *rule, int position = 0) : rule(rule), position(position) {}
+        };
+
+        std::map<id_t, Action> actions;
+
+        std::vector<Item> items;
+
+        std::vector<Item> Closure()
+        {
+            std::vector<Item> closure;
+            std::set<id_t> closed_nonterminals;
+
+            for(int i = 0; i < items.size(); i++)
+            {
+                Item const &item = this->items[i];
+
+                if(item.Complete()) continue;
+
+                Symbol<G> *symbol = item.NextSymbol();
+                if(symbol->symbol_type == SymbolType::kTerminal) continue;
+                if(closed_nonterminals.contains(symbol->id)) continue;
+
+                closed_nonterminals.insert(symbol->id);
+
+                auto *nonterminal = reinterpret_cast<NonTerminal<G>*>(symbol);
+                for(ProductionRule<G> const &rule : nonterminal->rules_)
+                {
+                    this->items.emplace_back(&rule);
+                }
+            }
+
+            return closure;
+        }
+
+        std::map<Symbol<G>*, LRState<G>> Transitions()
+        {
+            /*
+             * 1. Get set of all lookaheads
+             * 2. Generate transition + state for each lookahead, which will contain the advanced rules items from this (closed) state
+             */
+            std::map<Symbol<G>*, LRState<G>> transitions;
+
+            // Get set of all lookaheads
+            auto closure = this->Closure();
+
+            for(Item const &item : closure)
+            {
+                if(item.Comlete()) continue;
+                if(!transitions.contains(item.NextSymbol()))
+                {
+                    transitions[item.NextSymbol()] = LRState<G>{};
+                }
+
+                transitions[item.NextSymbol()].items.push_back(item.Advance());
+            }
+
+            return transitions;
+        }
+
+        LRState(NonTerminal<G> const &nonterminal)
+        {
+            for(ProductionRule<G> const &rule : nonterminal.rules_)
+            {
+                this->items.emplace_back(&rule);
+            }
+        }
+    };
+
     template<IGrammar G>
     class Parser
     {
@@ -358,178 +478,23 @@ namespace buffalo
     template<IGrammar G>
     class SLRParser : public Parser<G>
     {
-        using SymbolType = ProductionRule<G>::SymbolType;
+        Tokenizer<G> const &tok_;
 
-        Tokenizer<G> const &tokenizer_;
-        NonTerminal<G> const &start_;
+        std::vector<LRState<G>> states_;
 
-        enum class ActionType
-        {
-            kShift,
-            kReduce,
-            kAccept,
-        };
-
-        struct Item
-        {
-            ProductionRule<G> const *rule;
-            std::size_t index;
-
-            bool FullyMatched() const
-            {
-                return this->index > this->rule->parse_sequence_.size() - 1;
-            }
-
-            SymbolType const &NextSymbol() const
-            {
-                return this->rule->parse_sequence_[this->index];
-            }
-
-            Item Advance() const
-            {
-                return Item(this->rule, this->index + 1);
-            }
-
-            bool operator==(Item const &other)
-            {
-                return this->rule == other.rule && this->index == other.index;
-            }
-        };
-
-        struct State
-        {
-            std::optional<id_t> self = std::nullopt;
-            std::vector<Item> items;
-
-            void Append(State const &state)
-            {
-                this->items.insert(items.end(), state.items.begin(), state.items.end());
-            }
-
-            void Close()
-            {
-                for(auto const &item : this->items)
-                {
-                    if(!item.FullyMatched())
-                    {
-                        std::visit(overload{
-                                [&](NonTerminal<G> *nonterminal)
-                                {
-                                    if(this->self && nonterminal->id == *self) return;
-
-                                    State state(*nonterminal);
-                                    state.Close();
-
-                                    this->Append(state);
-                                },
-                                [](Terminal<G> *none) {},
-                        }, item.NextSymbol());
-                    }
-                }
-            }
-
-            State() = default;
-
-            State(NonTerminal<G> const &nonterminal)
-            {
-                this->self = nonterminal.id;
-
-                for(auto const &rule : nonterminal.rules_)
-                {
-                    this->items.push_back({
-                        .rule = &rule,
-                        .index = 0,
-                    });
-                }
-            }
-        };
-
-        struct Transition
-        {
-            Item from;
-            int state_id;
-            SymbolType on;
-        };
-
-        std::vector<Transition> transitions_;
-        std::vector<State> states_;
-
-        // void goto_;
-        // void action_;
+        std::map<id_t, std::set<id_t>> follow_;
 
     public:
         std::expected<typename G::ValueType, ParseError> Parse(std::string_view input) const override
         {
-            using StackType = std::variant<Token, NonTerminal<G>>;
-
-            auto stream = this->tokenizer_.Stream(input);
-            std::stack<StackType> stack;
-
-            // to shift we call stream.Next();
         }
 
-        SLRParser(Tokenizer<G> const &tokenizer, NonTerminal<G> const &start) : tokenizer_(tokenizer), start_(start)
+        SLRParser(Tokenizer<G> const &tok, NonTerminal<G> const &start) : tok_(tok)
         {
-            // Generate first state
-            auto &first_state = this->states_.emplace_back(start);
-            first_state.Close();
+            // Generate FOLLOW set
 
-            for(int i = 0; i < this->states_.size(); i++)
-            {
-                // Generate set of lookaheads
-                std::vector<SymbolType> lookahead_symbols;
-                for(auto const &item : this->states_[i].items)
-                {
-                    if(!item.FullyMatched())
-                    {
-                        // Skip if symbol already processed
-                        if(std::ranges::find(lookahead_symbols, item.NextSymbol()) != lookahead_symbols.end()) continue;
 
-                        lookahead_symbols.push_back(item.NextSymbol());
-                    }
-                    else
-                    {
-                        // TODO: For each terminal a in FOLLOW(A) -> REDUCE
-                    }
-                }
-
-                // Create new states
-                for(auto const &lookahead : lookahead_symbols)
-                {
-                    State new_state;
-
-                    for(auto const &item : this->states_[i].items)
-                    {
-                        // Check for existing transition
-                        auto item_matches_transition = [&](Transition t) {
-                            return t.from == item && t.on == lookahead;
-                        };
-
-                        if(auto it = std::ranges::find_if(this->transitions_, item_matches_transition); it != this->transitions_.end())
-                        {
-                            // Do proper rule processing
-                        }
-                        else
-                        {
-                            // Add item to state
-                            new_state.items.push_back(item.Advance());
-
-                            // Add transition to list
-                            this->transitions_.push_back({
-                                .from = item,
-                                .state_id = i + 1,
-                                .on = lookahead,
-                            });
-                        }
-                    }
-
-                    if(!new_state.items.empty())
-                    {
-                        new_state.Close();
-                        this->states_.push_back(new_state);
-                    }
-                }
-            }
+            LRState<G> &start_state = this->states_.emplace_back(start);
         }
     };
 }
