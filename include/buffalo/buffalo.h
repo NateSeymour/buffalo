@@ -27,8 +27,6 @@ namespace buffalo
     {
         typename T::ValueType;
         typename T::TransductorType;
-        typename T::SemanticReasonerType;
-        { T::SymbolId() } -> std::same_as<id_t>;
     };
 #pragma endregion
 
@@ -41,6 +39,9 @@ namespace buffalo
 
     template<IGrammar G>
     class SLRParser;
+
+    template<IGrammar G>
+    class Symbol;
 
     template<IGrammar G>
     class Terminal;
@@ -102,24 +103,38 @@ namespace buffalo
         std::string_view raw;
     };
 
-    template<ctll::fixed_string name, typename T>
+    template<typename T>
     class Grammar
     {
-    public:
-        // Forward decls
-        class Terminal;
-
     protected:
-        static inline id_t symbol_count = 0;
+        id_t symbol_count = 1;
 
     public:
         using ValueType = T;
         using TransductorType = std::function<T(std::vector<T> const&)>;
-        using SemanticReasonerType = std::function<T(Token const&)>;
 
-        static id_t SymbolId()
+        id_t SymbolId()
         {
-            return symbol_count++;
+            return this->symbol_count++;
+        }
+
+        const id_t epsilon = 0;
+
+        const int x;
+
+        consteval Grammar() : x(0)
+        {
+        }
+    };
+
+    template<typename T, std::size_t terminal_count, std::size_t nonterminal_count>
+    class DefineGrammar
+    {
+
+    public:
+        consteval DefineGrammar()
+        {
+
         }
     };
 
@@ -133,28 +148,35 @@ namespace buffalo
     class Symbol
     {
     public:
-        const id_t id = G::SymbolId();
+        const id_t id = 0; //G::SymbolId();
         const SymbolType symbol_type;
 
-        Symbol(SymbolType symbol_type) : symbol_type(symbol_type) {}
+        consteval Symbol(SymbolType symbol_type) : symbol_type(symbol_type) {}
     };
 
     template<IGrammar G>
     class Terminal : public Symbol<G>
     {
-    protected:
-        G::SemanticReasonerType semantic_reasoner_;
-
     public:
+        [[nodiscard]] virtual G::ValueType SemanticValue(Token const &token) const = 0;
+
         [[nodiscard]] virtual constexpr std::optional<Token> Match(std::string_view input) const = 0;
 
-        explicit Terminal(G::SemanticReasonerType semantic_reasoner) : Symbol<G>(SymbolType::kTerminal), semantic_reasoner_(semantic_reasoner) {}
+        consteval Terminal() : Symbol<G>(SymbolType::kTerminal) {}
     };
 
     template<IGrammar G, ctll::fixed_string pattern, typename SemanticType>
     class DefineTerminal : public Terminal<G>
     {
+        using SemanticReasonerType = SemanticType(*)(Token const &);
+        SemanticReasonerType semantic_reasoner_;
+
     public:
+        [[nodiscard]] G::ValueType SemanticValue(Token const &token) const override
+        {
+            return this->semantic_reasoner_(token);
+        }
+
         [[nodiscard]] constexpr std::optional<Token> Match(std::string_view input) const override
         {
             auto match = ctre::starts_with<pattern>(input);
@@ -178,7 +200,7 @@ namespace buffalo
             return std::get<SemanticType>(value);
         }
 
-        explicit DefineTerminal(G::SemanticReasonerType semantic_reasoner) : Terminal<G>(semantic_reasoner) {}
+        consteval explicit DefineTerminal(SemanticReasonerType semantic_reasoner) : semantic_reasoner_(semantic_reasoner) {}
     };
 
     template<IGrammar G>
@@ -328,6 +350,12 @@ namespace buffalo
 
         NonTerminal(ProductionRule<G> const &rule) : Symbol<G>(SymbolType::kNonTerminal), rules_({rule}) {}
         NonTerminal(std::initializer_list<ProductionRule<G>> const &rules) : Symbol<G>(SymbolType::kNonTerminal), rules_(rules) {}
+    };
+
+    template<IGrammar G, typename SemanticType, std::size_t rule_count>
+    class DefineNonTerminal : public NonTerminal<G>
+    {
+
     };
 
 #pragma region ProductionRule Composition Functions
@@ -482,8 +510,6 @@ namespace buffalo
 
         std::vector<LRState<G>> states_;
 
-        std::map<id_t, std::set<id_t>> follow_;
-
     public:
         std::expected<typename G::ValueType, ParseError> Parse(std::string_view input) const override
         {
@@ -491,8 +517,6 @@ namespace buffalo
 
         SLRParser(Tokenizer<G> const &tok, NonTerminal<G> const &start) : tok_(tok)
         {
-            // Generate FOLLOW set
-
 
             LRState<G> &start_state = this->states_.emplace_back(start);
         }
