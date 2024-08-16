@@ -13,6 +13,10 @@
 #include <cctype>
 #include <variant>
 #include <stack>
+#include <array>
+#include <memory>
+#include <map>
+#include <set>
 #include <ctre.hpp>
 
 // TODO: append_range instead of insert_range
@@ -103,41 +107,6 @@ namespace buffalo
         std::string_view raw;
     };
 
-    template<typename T>
-    class Grammar
-    {
-    protected:
-        id_t symbol_count = 1;
-
-    public:
-        using ValueType = T;
-        using TransductorType = std::function<T(std::vector<T> const&)>;
-
-        id_t SymbolId()
-        {
-            return this->symbol_count++;
-        }
-
-        const id_t epsilon = 0;
-
-        const int x;
-
-        consteval Grammar() : x(0)
-        {
-        }
-    };
-
-    template<typename T, std::size_t terminal_count, std::size_t nonterminal_count>
-    class DefineGrammar
-    {
-
-    public:
-        consteval DefineGrammar()
-        {
-
-        }
-    };
-
     enum class SymbolType
     {
         kTerminal,
@@ -148,10 +117,47 @@ namespace buffalo
     class Symbol
     {
     public:
-        const id_t id = 0; //G::SymbolId();
-        const SymbolType symbol_type;
+        const id_t id = 0;
+        const SymbolType type;
 
-        consteval Symbol(SymbolType symbol_type) : symbol_type(symbol_type) {}
+        explicit consteval Symbol(SymbolType symbol_type) : type(symbol_type) {}
+    };
+
+    template<typename T>
+    class GrammarDefinition
+    {
+    public:
+        using ValueType = T;
+        using TransductorType = std::function<T(std::vector<T> const&)>;
+
+        consteval GrammarDefinition() = delete;
+    };
+
+    template<IGrammar G>
+    class Grammar
+    {
+        std::map<Symbol<G> const *, std::set<Symbol<G> const *>> first_;
+        std::map<Symbol<G> const *, std::set<Symbol<G> const *>> follow_;
+
+    protected:
+        std::vector<Symbol<G> const *> symbols;
+
+    public:
+        Grammar(std::initializer_list<Symbol<G> const*> symbols) : symbols(symbols)
+        {
+            // Generate FIRST set
+            for(Symbol<G> const *symbol : this->symbols)
+            {
+                if(symbol->type == SymbolType::kTerminal)
+                {
+                    this->first_[symbol] = { symbol };
+                }
+                else
+                {
+
+                }
+            }
+        }
     };
 
     template<IGrammar G>
@@ -200,7 +206,7 @@ namespace buffalo
             return std::get<SemanticType>(value);
         }
 
-        consteval explicit DefineTerminal(SemanticReasonerType semantic_reasoner) : semantic_reasoner_(semantic_reasoner) {}
+        consteval explicit DefineTerminal(SemanticReasonerType semantic_reasoner) : Terminal<G>(), semantic_reasoner_(semantic_reasoner) {}
     };
 
     template<IGrammar G>
@@ -355,7 +361,11 @@ namespace buffalo
     template<IGrammar G, typename SemanticType, std::size_t rule_count>
     class DefineNonTerminal : public NonTerminal<G>
     {
-
+    public:
+        [[nodiscard]] SemanticType operator()(G::ValueType const &value)
+        {
+            return std::get<SemanticType>(value);
+        }
     };
 
 #pragma region ProductionRule Composition Functions
@@ -447,7 +457,7 @@ namespace buffalo
                 if(item.Complete()) continue;
 
                 Symbol<G> *symbol = item.NextSymbol();
-                if(symbol->symbol_type == SymbolType::kTerminal) continue;
+                if(symbol->type == SymbolType::kTerminal) continue;
                 if(closed_nonterminals.contains(symbol->id)) continue;
 
                 closed_nonterminals.insert(symbol->id);

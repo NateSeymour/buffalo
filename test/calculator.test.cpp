@@ -6,27 +6,27 @@
  * Grammar Definition
  */
 using ValueType = std::variant<double, std::string>;
-using CalculatorGrammarType = buffalo::Grammar<ValueType>;
+using Calculator = buffalo::GrammarDefinition<ValueType>;
 
 /*
  * Terminals & Tokenizer
  */
-buffalo::DefineTerminal<CalculatorGrammarType, R"((\-?\d+(\.\d+)?))", double> NUMBER([](auto &tok){
+buffalo::DefineTerminal<Calculator, R"((\-?\d+(\.\d+)?))", double> NUMBER([](auto &tok){
     return std::stod(std::string(tok.raw));
 });
 
-buffalo::DefineTerminal<CalculatorGrammarType, R"(\+|\-|\*|\/)", std::string> OPERATOR([](auto &tok){
+buffalo::DefineTerminal<Calculator, R"(\+|\-|\*|\/)", std::string> OPERATOR([](auto &tok){
     return std::string(tok.raw);
 });
 
-buffalo::DefineTerminal<CalculatorGrammarType, R"(\s*$)", double> END([](auto &tok){
+buffalo::DefineTerminal<Calculator, R"(\s*$)", double> END([](auto &tok){
     return 0.0;
 });
 
 /*
  * Non-Terminals
  */
-buffalo::NonTerminal<CalculatorGrammarType> expression
+buffalo::NonTerminal<Calculator> expression
     = (expression + OPERATOR + NUMBER)<=>[](auto &$)
     {
         return std::get<double>($[0]) + NUMBER($[2]);
@@ -36,13 +36,22 @@ buffalo::NonTerminal<CalculatorGrammarType> expression
         return NUMBER($[0]);
     };
 
-buffalo::NonTerminal<CalculatorGrammarType> program
+buffalo::NonTerminal<Calculator> program
     = (expression + END)<=>[](auto &$)
     {
         return std::get<double>($[0]);
     };
 
-CalculatorGrammarType CalculatorGrammar;
+buffalo::Grammar<Calculator> grammar({
+    // Terminals
+    &NUMBER,
+    &OPERATOR,
+    &END,
+
+    // NonTerminals
+    &expression,
+    &program,
+});
 
 TEST(Buffalo, Calculator)
 {
