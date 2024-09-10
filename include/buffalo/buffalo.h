@@ -18,7 +18,7 @@
 
 // TODO: append_range instead of insert_range
 
-namespace buffalo
+namespace bf
 {
     using id_t = std::size_t;
 
@@ -420,7 +420,7 @@ namespace buffalo
 
             [[nodiscard]] bool Complete() const
             {
-                return this->position >= this->rule->parse_sequence_.size();
+                return this->position >= this->rule->sequence_.size();
             }
 
             [[nodiscard]] Item Advance() const
@@ -430,7 +430,7 @@ namespace buffalo
 
             [[nodiscard]] Symbol<G> *NextSymbol() const
             {
-                return this->rule->parse_sequence_[this->position];
+                return this->rule->sequence_[this->position];
             }
 
             Item() = delete;

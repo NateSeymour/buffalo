@@ -5,61 +5,129 @@
 #ifndef BUFFALO2_H
 #define BUFFALO2_H
 
-#include <variant>
+#include <list>
+#include <map>
 #include <vector>
 
-namespace buffalo
+namespace bf
 {
+    enum class DefaultTokenType {};
+
+    template<typename TokenType>
     struct Token {};
 
-    template<typename T>
-    concept IGrammar = requires(T)
+    template<typename ValueType, typename TokenType = DefaultTokenType>
+    class Grammar
     {
-        typename T::ValueType;
-        typename T::TransductorType;
-        typename T::SemanticReasonerType;
-    };
+        /*
+         * TYPES
+         */
+        using ReasonerType = ValueType(*)(Token<TokenType>&);
+        using TransductorType = ValueType(*)(std::vector<ValueType> const&);
 
-    template<typename T>
-    class GrammarType
-    {
-    public:
-        using ValueType = T;
-        using TransductorType = T(*)(std::vector<T> const&);
-        using SemanticReasonerType = T(*)(Token const &);
+        /*
+         * FORWARD-DECLS
+         */
+        class ProductionRule;
 
-        GrammarType() = delete;
-    };
-
-#pragma region Terminal
-
-    template<IGrammar G>
-    class Terminal
-    {
-    protected:
-        typename G::SemanticReasonerType reasoner_;
-
-    public:
-
-    };
-
-    template<IGrammar G, typename SemanticType>
-    class DefineTerminal : public Terminal<G>
-    {
-    public:
-        SemanticType operator()(typename G::ValueType &value)
+        /*
+         * TERMINALS
+         */
+        class Terminal
         {
-            return std::get<SemanticType>(value);
+            inline static std::size_t last_id_ = 0;
+
+            std::size_t id_ = Terminal::last_id_++;
+
+            TokenType type_;
+            ReasonerType reasoner_;
+
+        public:
+            bool operator==(Terminal const &other) const
+            {
+                return this->id_ == other.id_;
+            }
+
+            Terminal(TokenType type, ReasonerType transductor) : type_(type), reasoner_(transductor) {}
+            Terminal(ReasonerType transductor) : reasoner_(transductor) {}
+        };
+
+        template<typename SemanticType>
+        struct TerminalDefinition
+        {
+            Terminal &terminal;
+
+            SemanticType operator()(ValueType value) const
+            {
+                return std::get<SemanticType>(value);
+            }
+        };
+
+        /*
+         * NON-TERMINALS
+         */
+        class NonTerminal
+        {
+        public:
+            std::vector<ProductionRule> rules;
+        };
+
+        template<typename SemanticType>
+        struct NonTerminalDefinition
+        {
+            NonTerminal &nonterminal;
+
+            NonTerminalDefinition &operator[](ProductionRule const &rule)
+            {
+                nonterminal.rules = { rule };
+
+                return *this;
+            }
+
+            NonTerminalDefinition &operator[](std::vector<ProductionRule> const &rules)
+            {
+                nonterminal.rules = rules;
+
+                return *this;
+            }
+
+            NonTerminalDefinition(NonTerminal &nonterminal) : nonterminal(nonterminal) {}
+        };
+
+        /*
+         * PRODUCTION RULES
+         */
+        class ProductionRule
+        {
+
+        };
+
+        /*
+         * MEMBERS
+         */
+        std::list<Terminal> terminals_;
+        std::list<NonTerminal> nonterminals_;
+
+    protected:
+        template<typename SemanticType>
+        TerminalDefinition<SemanticType> MakeTerminal(ReasonerType reasoner)
+        {
+            return {
+                .terminal = this->terminals_.emplace_back(reasoner)
+            };
         }
 
-        DefineTerminal(typename G::SemanticReasonerType reasoner) : reasoner_(reasoner) {}
+        template<typename SemanticType>
+        NonTerminalDefinition<SemanticType> MakeNonTerminal()
+        {
+            return this->nonterminals_.emplace_back();
+        }
+
+    public:
+        virtual void Build() = 0;
+
+        virtual ~Grammar() = default;
     };
-
-#pragma endregion
-
-    class NonTerminal {};
-
-    class Parser {};
 }
 
 #endif //BUFFALO2_H
