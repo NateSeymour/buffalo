@@ -89,25 +89,22 @@ namespace bf
     {
         friend class Grammar<G>;
 
-        inline static std::size_t last_id_ = 0;
-        std::size_t id_ = Terminal::last_id_++;
-
         typename G::TokenType type_;
-        typename G::ReasonerType reasoner_;
+        typename G::ReasonerType reasoner_ = nullptr;
 
     public:
         bool operator==(Terminal const &other) const
         {
-            return this->id_ == other.id_;
+            return this->type_ == other.type_;
         }
 
         bool operator<(Terminal const &other) const
         {
-            return this->id_ < other.id_;
+            return this->type_ < other.type_;
         }
 
-        Terminal(typename G::TokenType type, typename G:: ReasonerType reasoner) : type_(type), reasoner_(reasoner) {}
-        Terminal(typename G::ReasonerType reasoner) : reasoner_(reasoner) {}
+        Terminal(typename G::TokenType const type) : type_(type) {}
+        Terminal(typename G::TokenType const type, typename G:: ReasonerType reasoner) : type_(type), reasoner_(reasoner) {}
     };
 
     /*
@@ -124,6 +121,7 @@ namespace bf
         std::vector<ProductionRule<G>> rules_;
 
     public:
+        // WARNING: This will soon cause many issues and headaches!!!
         NonTerminal &operator|(ProductionRule<G> const &rhs)
         {
             this->rules_.push_back(rhs);
@@ -153,12 +151,12 @@ namespace bf
         friend class Grammar<G>;
 
         typename G::TransductorType transductor_;
-        std::vector<std::variant<Terminal<G>*, NonTerminal<G>*>> sequence_;
+        std::vector<std::variant<Terminal<G>, NonTerminal<G>*>> sequence_;
 
     public:
-        ProductionRule &operator+(Terminal<G> &rhs)
+        ProductionRule &operator+(Terminal<G> const &rhs)
         {
-            this->sequence_.push_back(&rhs);
+            this->sequence_.push_back(rhs);
 
             return *this;
         }
@@ -170,6 +168,13 @@ namespace bf
             return *this;
         }
 
+        ProductionRule &operator+(typename G::TokenType const rhs)
+        {
+            this->sequence_.emplace_back(rhs);
+
+            return *this;
+        }
+
         ProductionRule &operator<=>(typename G::TransductorType tranductor)
         {
             this->transductor_ = tranductor;
@@ -177,7 +182,8 @@ namespace bf
             return *this;
         }
 
-        ProductionRule(Terminal<G> &terminal) : sequence_({ &terminal }) {}
+        ProductionRule(typename G::TokenType anonymous_token) : ProductionRule(Terminal<G>(anonymous_token)) {};
+        ProductionRule(Terminal<G> const &terminal) : sequence_({ terminal }) {}
         ProductionRule(NonTerminal<G> &nonterminal) : sequence_({ &nonterminal }) {}
     };
 
@@ -201,28 +207,7 @@ namespace bf
             /*
              * GENERATE FIRST SET
              */
-            std::stack<NonTerminal<G>> stack;
-            stack.push(start);
-            while(!stack.empty())
-            {
-                if(!this->nonterminals_.contains(stack.top()))
-                {
-                    this->nonterminals_.insert(stack.top());
-                }
 
-                for(auto &rule : stack.top().rules_)
-                {
-                    for(auto &symbol : rule.sequence_)
-                    {
-                        std::visit(overload{
-                            [](Terminal<G>* terminal)
-                            {
-
-                            }
-                        }, symbol);
-                    }
-                }
-            }
         }
     };
 
@@ -236,7 +221,13 @@ namespace bf
     }
 
     template<IGrammar G>
-    ProductionRule<G> operator+(Terminal<G> &lhs, NonTerminal<G> *rhs)
+    ProductionRule<G> operator+(Terminal<G> &lhs, NonTerminal<G> &rhs)
+    {
+        return ProductionRule(lhs) + rhs;
+    }
+
+    template<IGrammar G>
+    ProductionRule<G> operator+(Terminal<G> &lhs, typename G::TokenType rhs)
     {
         return ProductionRule(lhs) + rhs;
     }
@@ -249,6 +240,30 @@ namespace bf
 
     template<IGrammar G>
     ProductionRule<G> operator+(NonTerminal<G> &lhs, Terminal<G> &rhs)
+    {
+        return ProductionRule(lhs) + rhs;
+    }
+
+    template<IGrammar G>
+    ProductionRule<G> operator+(NonTerminal<G> &lhs, typename G::TokenType rhs)
+    {
+        return ProductionRule(lhs) + rhs;
+    }
+
+    template<IGrammar G>
+    ProductionRule<G> operator+(typename G::TokenType lhs, typename G::TokenType rhs)
+    {
+        return ProductionRule(lhs) + rhs;
+    }
+
+    template<IGrammar G>
+    ProductionRule<G> operator+(typename G::TokenType lhs, Terminal<G> &rhs)
+    {
+        return ProductionRule(lhs) + rhs;
+    }
+
+    template<IGrammar G>
+    ProductionRule<G> operator+(typename G::TokenType lhs, NonTerminal<G> &rhs)
     {
         return ProductionRule(lhs) + rhs;
     }
