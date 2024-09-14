@@ -27,7 +27,6 @@ namespace bf
     {
         using Ts::operator()...;
 
-        // Prevent implicit type conversions
         template<typename T>
         constexpr void operator()(T) const
         {
@@ -138,6 +137,8 @@ namespace bf
             return this->id_ < other.id_;
         }
 
+        NonTerminal() = default;
+
         NonTerminal(ProductionRule<G> const &rule) : rules_({rule}) {}
         NonTerminal(std::initializer_list<ProductionRule<G>> const &rules) : rules_(rules) {}
     };
@@ -168,13 +169,6 @@ namespace bf
             return *this;
         }
 
-        ProductionRule &operator+(typename G::TokenType const rhs)
-        {
-            this->sequence_.emplace_back(rhs);
-
-            return *this;
-        }
-
         ProductionRule &operator<=>(typename G::TransductorType tranductor)
         {
             this->transductor_ = tranductor;
@@ -200,14 +194,37 @@ namespace bf
         std::map<NonTerminal<G>, std::set<Terminal<G>>> follow_;
 
     public:
-        Grammar(NonTerminal<G> start)
+        void ProcessNonTerminalFirstSet(NonTerminal<G> &nonterminal)
+        {
+            for(auto &rule : nonterminal.rules_)
+            {
+                if(rule.sequence_.empty()) continue;
+
+                auto &symbol = rule.sequence_[0];
+                std::visit(overload{
+                    [&](Terminal<G> terminal)
+                    {
+                        this->first_[nonterminal].insert(terminal);
+                    },
+                    [&](NonTerminal<G> *child_nonterminal)
+                    {
+                        if(nonterminal == *child_nonterminal) return;
+
+                        this->ProcessNonTerminalFirstSet(*child_nonterminal);
+                        this->first_[nonterminal].insert_range(this->first_[*child_nonterminal]);
+                    }
+                }, symbol);
+            }
+        }
+
+        Grammar(NonTerminal<G> &start)
         {
             this->nonterminals_.insert(start);
 
             /*
              * GENERATE FIRST SET
              */
-
+            this->ProcessNonTerminalFirstSet(start);
         }
     };
 
@@ -227,12 +244,6 @@ namespace bf
     }
 
     template<IGrammar G>
-    ProductionRule<G> operator+(Terminal<G> &lhs, typename G::TokenType rhs)
-    {
-        return ProductionRule(lhs) + rhs;
-    }
-
-    template<IGrammar G>
     ProductionRule<G> operator+(NonTerminal<G> &lhs, NonTerminal<G> &rhs)
     {
         return ProductionRule(lhs) + rhs;
@@ -240,30 +251,6 @@ namespace bf
 
     template<IGrammar G>
     ProductionRule<G> operator+(NonTerminal<G> &lhs, Terminal<G> &rhs)
-    {
-        return ProductionRule(lhs) + rhs;
-    }
-
-    template<IGrammar G>
-    ProductionRule<G> operator+(NonTerminal<G> &lhs, typename G::TokenType rhs)
-    {
-        return ProductionRule(lhs) + rhs;
-    }
-
-    template<IGrammar G>
-    ProductionRule<G> operator+(typename G::TokenType lhs, typename G::TokenType rhs)
-    {
-        return ProductionRule(lhs) + rhs;
-    }
-
-    template<IGrammar G>
-    ProductionRule<G> operator+(typename G::TokenType lhs, Terminal<G> &rhs)
-    {
-        return ProductionRule(lhs) + rhs;
-    }
-
-    template<IGrammar G>
-    ProductionRule<G> operator+(typename G::TokenType lhs, NonTerminal<G> &rhs)
     {
         return ProductionRule(lhs) + rhs;
     }

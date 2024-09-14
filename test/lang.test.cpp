@@ -43,6 +43,11 @@ bf::Terminal<G> NUMBER(Token::NUMBER, [](auto &tok) -> ValueType {
 
 bf::Terminal<G> IDENTIFIER(Token::IDENTIFIER);
 
+bf::Terminal<G> KW_VAR(Token::KW_VAR);
+
+bf::Terminal<G> OP_ADDITION(Token::OP_ADDITION);
+bf::Terminal<G> OP_ASSIGNMENT(Token::OP_ASSIGNMENT);
+
 bf::Terminal<G> END(Token::END, [](auto &tok) -> ValueType {
     return 0.0;
 });
@@ -52,23 +57,27 @@ bf::NonTerminal<G> expression
     {
         return std::get<double>($[0]);
     }
-    | (expression + Token::OP_ADDITION + NUMBER)<=>[](auto &$) -> ValueType
+    | bf::ProductionRule(IDENTIFIER)<=>[](auto &$) -> ValueType
+    {
+        return 0.0;
+    }
+    | (expression + OP_ADDITION + NUMBER)<=>[](auto &$) -> ValueType
     {
         return 0.0;
     };
 
 bf::NonTerminal<G> variable_declaration
-    = (Token::KW_VAR + IDENTIFIER + Token::OP_ASSIGNMENT + expression)<=>[](auto &$) -> ValueType
+    = (KW_VAR + IDENTIFIER + OP_ASSIGNMENT + expression)<=>[](auto &$) -> ValueType
     {
         return 0.0;
     };
 
 bf::NonTerminal<G> statement
-    = expression
-    | variable_declaration
+    = bf::ProductionRule(expression)
+    | bf::ProductionRule(variable_declaration)
     ;
 
-bf::Grammar grammar(expression);
+bf::Grammar grammar(statement);
 bf::SLRParser calculator(grammar);
 
 TEST(Lang, BasicParsing)
