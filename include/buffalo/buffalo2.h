@@ -187,16 +187,13 @@ namespace bf
     template<IGrammar G>
     class Grammar
     {
-        std::set<Terminal<G>> terminals_;
-        std::set<NonTerminal<G>> nonterminals_;
-
-        std::map<NonTerminal<G>, std::set<Terminal<G>>> first_;
-        std::map<NonTerminal<G>, std::set<Terminal<G>>> follow_;
+        std::map<NonTerminal<G>*, std::set<Terminal<G>>> first_;
+        std::map<NonTerminal<G>*, std::set<Terminal<G>>> follow_;
 
     public:
-        void ProcessNonTerminalFirstSet(NonTerminal<G> &nonterminal)
+        void ProcessNonTerminalFirstSet(NonTerminal<G> *nonterminal)
         {
-            for(auto &rule : nonterminal.rules_)
+            for(auto &rule : nonterminal->rules_)
             {
                 if(rule.sequence_.empty()) continue;
 
@@ -208,23 +205,93 @@ namespace bf
                     },
                     [&](NonTerminal<G> *child_nonterminal)
                     {
-                        if(nonterminal == *child_nonterminal) return;
+                        if(nonterminal == child_nonterminal) return;
 
-                        this->ProcessNonTerminalFirstSet(*child_nonterminal);
-                        this->first_[nonterminal].insert_range(this->first_[*child_nonterminal]);
+                        this->ProcessNonTerminalFirstSet(child_nonterminal);
+                        this->first_[nonterminal].insert(this->first_[child_nonterminal].begin(), this->first_[child_nonterminal].end());
                     }
                 }, symbol);
             }
         }
 
+        void ProcessNonTerminalFollowSet()
+        {
+            bool has_change = false;
+
+            do
+            {
+                for(auto &[nonterminal, follow_set] : this->follow_)
+                {
+                    for(auto const &rule : nonterminal->rules_)
+                    {
+                        for(int i = 0; i < rule.sequence_.size() - 1; i++)
+                        {
+                            auto &symbol = rule.sequence_[i];
+                            auto &follow = rule.sequence_[i + 1];
+
+                            // Skip over terminals
+                            if(std::holds_alternative<Terminal<G>>(symbol)) continue;
+
+                            // Add to NonTerminal FOLLOW set
+                            auto observed_nonterminal = std::get<NonTerminal<G>*>(symbol);
+
+                            has_change = std::visit(overload{
+                                [&](Terminal<G> terminal)
+                                {
+                                    if(auto const [it, inserted] = this->follow_[observed_nonterminal].insert(terminal); inserted)
+                                    {
+                                        return true;
+                                    }
+
+                                    return false;
+                                },
+                                [&](NonTerminal<G> *child_nonterminal)
+                                {
+                                    std::size_t follow_set_size = this->follow_[observed_nonterminal].size();
+
+                                    this->follow_[observed_nonterminal].insert(this->first_[child_nonterminal].begin(), this->first_[child_nonterminal].end());
+
+                                    if(this->follow_[observed_nonterminal].size() > follow_set_size)
+                                    {
+                                        return true;
+                                    }
+
+                                    return false;
+                                }
+                            }, follow);
+                        }
+                    }
+                }
+            } while(has_change);
+        }
+
+        void RegisterAllSymbols(NonTerminal<G> *nonterminal)
+        {
+            this->first_[nonterminal] = {};
+            this->follow_[nonterminal] = {};
+
+            for(auto &rule : nonterminal->rules_)
+            {
+                for(auto &symbol : rule.sequence_)
+                {
+                    std::visit(overload{
+                        [](Terminal<G> terminal) { /* Do Nothing */ },
+                        [&](NonTerminal<G> *child_nonterminal)
+                        {
+                            if(nonterminal == child_nonterminal) return;
+
+                            this->RegisterAllSymbols(child_nonterminal);
+                        }
+                    }, symbol);
+                }
+            }
+        }
+
         Grammar(NonTerminal<G> &start)
         {
-            this->nonterminals_.insert(start);
-
-            /*
-             * GENERATE FIRST SET
-             */
-            this->ProcessNonTerminalFirstSet(start);
+            this->RegisterAllSymbols(&start);
+            this->ProcessNonTerminalFirstSet(&start);
+            this->ProcessNonTerminalFollowSet();
         }
     };
 
