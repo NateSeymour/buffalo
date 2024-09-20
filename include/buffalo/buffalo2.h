@@ -1,7 +1,3 @@
-//
-// Created by Nathan on 9/8/2024.
-//
-
 #ifndef BUFFALO2_H
 #define BUFFALO2_H
 
@@ -38,12 +34,6 @@ namespace bf
     overload(Ts...) -> overload<Ts...>;
 
     /*
-     * TOKEN
-     */
-    template<typename TokenType>
-    struct Token {};
-
-    /*
      * GRAMMAR DEFINITION
      */
     template<typename T>
@@ -58,19 +48,6 @@ namespace bf
         typename T::TransductorType;
     };
 
-    template<typename GValueType, typename GTokenType>
-    class GrammarDefinition
-    {
-    public:
-        /*
-         * TYPES
-         */
-        using ValueType = GValueType;
-        using TokenType = GTokenType;
-        using ReasonerType = ValueType(*)(Token<TokenType>&);
-        using TransductorType = std::function<ValueType(std::vector<ValueType> const&)>;
-    };
-
     /*
      * FORWARD-DECLS
      */
@@ -80,8 +57,55 @@ namespace bf
     template<IGrammar G>
     class ProductionRule;
 
-    /*
-     * TERMINALS
+    template<IGrammar G>
+    class Terminal;
+
+    template<IGrammar G>
+    class NonTerminal;
+
+    struct Token;
+
+    /**
+     * GRAMMAR DEFINITION
+     * @tparam GValueType
+     */
+    template<typename GValueType>
+    class GrammarDefinition
+    {
+    public:
+        /*
+         * TYPES
+         */
+        using ValueType = GValueType;
+        using ReasonerType = ValueType(*)(Token&);
+        using TransductorType = std::function<ValueType(std::vector<ValueType> const&)>;
+    };
+
+    /**
+     * STATIC IDENTIFIER
+     * Provides a unique static identifier for all object holders.
+     * NOTE: Only valid within the same translation unit!
+     */
+    class StaticIdentifier
+    {
+        inline static std::size_t last_id_ = 0;
+
+    public:
+        std::size_t const value = StaticIdentifier::last_id_++;
+
+        bool operator==(StaticIdentifier const &other) const
+        {
+            return this->value == other.value;
+        }
+
+        bool operator<(StaticIdentifier const &other) const
+        {
+            return this->value < other.value;
+        }
+    };
+
+    /**
+     * TERMINAL
      */
     template<IGrammar G>
     class Terminal
@@ -102,7 +126,7 @@ namespace bf
             return this->type_ < other.type_;
         }
 
-        Terminal(typename G::TokenType const type) : type_(type) {}
+        Terminal() {}
         Terminal(typename G::TokenType const type, typename G:: ReasonerType reasoner) : type_(type), reasoner_(reasoner) {}
     };
 
@@ -327,6 +351,22 @@ namespace bf
     {
         return {lhs, rhs};
     }
+
+    /*
+     * TOKEN
+     */
+    struct Token {};
+
+    /**
+     * TOKENIZER
+     * Virtual class to expose the Tokenizer API.
+     */
+    template<IGrammar G>
+    class Tokenizer
+    {
+    public:
+
+    };
 
     /*
      * PARSER

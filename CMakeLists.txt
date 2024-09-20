@@ -23,6 +23,7 @@ FetchContent_MakeAvailable(GTEST)
 add_library(buffalo INTERFACE
         include/buffalo/buffalo.h
         include/buffalo/buffalo2.h
+        include/buffalo/spex.h
 )
 target_link_libraries(buffalo INTERFACE ctre::ctre)
 
