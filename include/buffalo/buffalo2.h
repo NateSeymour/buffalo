@@ -43,7 +43,6 @@ namespace bf
          * TYPES
          */
         typename T::ValueType;
-        typename T::TokenType;
         typename T::ReasonerType;
         typename T::TransductorType;
     };
@@ -63,7 +62,36 @@ namespace bf
     template<IGrammar G>
     class NonTerminal;
 
-    struct Token;
+    /**
+     * LOCATION
+     */
+     struct Location
+     {
+        std::size_t begin;
+        std::size_t end;
+     };
+
+    /**
+     * TOKEN
+     */
+    struct Token
+    {
+        std::size_t terminal_id;
+        Location location;
+    };
+
+    /**
+     * TOKENIZER
+     * Virtual class to expose the Tokenizer API.
+     */
+    template<IGrammar G>
+    class Tokenizer
+    {
+    public:
+        using LexxerType = std::optional<Token>(*)(Terminal<G>*, std::string_view);
+
+        virtual void RegisterTerminal(Terminal<G> *terminal, LexxerType lexxer = nullptr) = 0;
+    };
 
     /**
      * GRAMMAR DEFINITION
@@ -93,6 +121,11 @@ namespace bf
     public:
         std::size_t const value = StaticIdentifier::last_id_++;
 
+        operator std::size_t() const
+        {
+            return this->value;
+        }
+
         bool operator==(StaticIdentifier const &other) const
         {
             return this->value == other.value;
@@ -105,41 +138,50 @@ namespace bf
     };
 
     /**
+     * STATICALLY IDENTIFIED OBJECT
+     * Helper class for terminals/nonterminals to derive.
+     */
+    struct StaticallyIdentifiedObject
+    {
+        StaticIdentifier const id;
+
+        bool operator==(StaticallyIdentifiedObject const &other) const
+        {
+            return this->id == other.id;
+        }
+
+        bool operator<(StaticallyIdentifiedObject const &other) const
+        {
+            return this->id < other.id;
+        }
+    };
+
+    /**
      * TERMINAL
      */
     template<IGrammar G>
-    class Terminal
+    class Terminal : public StaticallyIdentifiedObject
     {
         friend class Grammar<G>;
 
-        typename G::TokenType type_;
         typename G::ReasonerType reasoner_ = nullptr;
 
     public:
-        bool operator==(Terminal const &other) const
-        {
-            return this->type_ == other.type_;
-        }
+        Terminal() = default;
 
-        bool operator<(Terminal const &other) const
+        Terminal(Tokenizer<G> &tok, Tokenizer<G>::LexxerType lexxer = nullptr, typename G:: ReasonerType reasoner = nullptr) : reasoner_(reasoner)
         {
-            return this->type_ < other.type_;
+            tok.RegisterTerminal(this, lexxer);
         }
-
-        Terminal() {}
-        Terminal(typename G::TokenType const type, typename G:: ReasonerType reasoner) : type_(type), reasoner_(reasoner) {}
     };
 
     /*
      * NON-TERMINALS
      */
     template<IGrammar G>
-    class NonTerminal
+    class NonTerminal : StaticallyIdentifiedObject
     {
         friend class Grammar<G>;
-
-        inline static std::size_t last_id_ = 0;
-        std::size_t id_ = NonTerminal::last_id_++;
 
         std::vector<ProductionRule<G>> rules_;
 
@@ -150,17 +192,6 @@ namespace bf
             this->rules_.push_back(rhs);
             return *this;
         }
-
-        bool operator==(NonTerminal const &other) const
-        {
-            return this->id_ == other.id_;
-        }
-
-        bool operator<(NonTerminal const &other) const
-        {
-            return this->id_ < other.id_;
-        }
-
         NonTerminal() = default;
 
         NonTerminal(ProductionRule<G> const &rule) : rules_({rule}) {}
@@ -200,7 +231,6 @@ namespace bf
             return *this;
         }
 
-        ProductionRule(typename G::TokenType anonymous_token) : ProductionRule(Terminal<G>(anonymous_token)) {};
         ProductionRule(Terminal<G> const &terminal) : sequence_({ terminal }) {}
         ProductionRule(NonTerminal<G> &nonterminal) : sequence_({ &nonterminal }) {}
     };
@@ -351,22 +381,6 @@ namespace bf
     {
         return {lhs, rhs};
     }
-
-    /*
-     * TOKEN
-     */
-    struct Token {};
-
-    /**
-     * TOKENIZER
-     * Virtual class to expose the Tokenizer API.
-     */
-    template<IGrammar G>
-    class Tokenizer
-    {
-    public:
-
-    };
 
     /*
      * PARSER
