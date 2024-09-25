@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <variant>
+#include <expected>
 #include <vector>
 #include <map>
 #include <set>
@@ -63,6 +64,11 @@ namespace bf
     class NonTerminal;
 
     /**
+     * ERROR
+     */
+    class Error {};
+
+    /**
      * LOCATION
      */
      struct Location
@@ -78,6 +84,11 @@ namespace bf
     {
         std::size_t terminal_id;
         Location location;
+
+        std::size_t Size()
+        {
+            return this->location.end - this->location.begin;
+        }
     };
 
     /**
@@ -90,7 +101,14 @@ namespace bf
     public:
         using LexxerType = std::optional<Token>(*)(Terminal<G>*, std::string_view);
 
-        virtual void RegisterTerminal(Terminal<G> *terminal, LexxerType lexxer = nullptr) = 0;
+        virtual void RegisterTerminal(Terminal<G> *terminal, LexxerType lexxer) = 0;
+
+        /**
+         * Gets the first token on the input stream.
+         * @param input
+         * @return
+         */
+        virtual std::expected<Token, Error> First(std::string_view input) const = 0;
     };
 
     /**
@@ -119,31 +137,30 @@ namespace bf
         inline static std::size_t last_id_ = 0;
 
     public:
-        std::size_t const value = StaticIdentifier::last_id_++;
+        std::size_t id = StaticIdentifier::last_id_++;
 
         operator std::size_t() const
         {
-            return this->value;
+            return this->id;
         }
 
         bool operator==(StaticIdentifier const &other) const
         {
-            return this->value == other.value;
+            return this->id == other.id;
         }
 
         bool operator<(StaticIdentifier const &other) const
         {
-            return this->value < other.value;
+            return this->id < other.id;
         }
     };
 
     /**
      * STATICALLY IDENTIFIED OBJECT
-     * Helper class for terminals/nonterminals to derive.
      */
     struct StaticallyIdentifiedObject
     {
-        StaticIdentifier const id;
+        StaticIdentifier id;
 
         bool operator==(StaticallyIdentifiedObject const &other) const
         {
@@ -175,8 +192,8 @@ namespace bf
         }
     };
 
-    /*
-     * NON-TERMINALS
+    /**
+     * NON-TERMINAL
      */
     template<IGrammar G>
     class NonTerminal : StaticallyIdentifiedObject
