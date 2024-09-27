@@ -85,7 +85,7 @@ namespace bf
         std::size_t terminal_id;
         Location location;
 
-        std::size_t Size()
+        std::size_t Size() const
         {
             return this->location.end - this->location.begin;
         }
@@ -101,7 +101,13 @@ namespace bf
     public:
         using LexxerType = std::optional<Token>(*)(Terminal<G>*, std::string_view);
 
-        virtual void RegisterTerminal(Terminal<G> *terminal, LexxerType lexxer) = 0;
+        /**
+         * Optional method to register a terminal relationship to a lexxer.
+         * Default implementation does nothing.
+         * @param terminal
+         * @param lexxer
+         */
+        virtual void RegisterTerminal(Terminal<G> *terminal, LexxerType lexxer) { /* Do Nothing */ }
 
         /**
          * Gets the first token on the input stream.
@@ -109,6 +115,70 @@ namespace bf
          * @return
          */
         virtual std::expected<Token, Error> First(std::string_view input) const = 0;
+
+        /**
+         * Helper to create a stream of tokens from string_view.
+         */
+        class TokenStream
+        {
+            std::size_t index_ = 0;
+            std::string_view input_;
+
+            Tokenizer<G> const &tokenizer_;
+
+            std::deque<Token> buffer_;
+
+        public:
+            std::optional<Token> Peek(std::size_t lookahead = 1)
+            {
+                // Fill buffer to requested lookahead
+                for(int i = 0; i < lookahead - buffer_.size(); i++)
+                {
+                    auto token = this->tokenizer_.First(this->input_);
+                    if(!token)
+                    {
+                        return std::nullopt;
+                    }
+
+                    token->location.begin += this->index_;
+                    token->location.end += this->index_;
+
+                    this->index_ += token->Size();
+                    this->input_ = this->input_.substr(token->Size());
+
+                    this->buffer_.push_back(*token);
+                }
+
+                // Feed from buffer first
+                if(this->buffer_.size() >= lookahead)
+                {
+                    return this->buffer_[lookahead - 1];
+                }
+            }
+
+            std::optional<Token> Consume()
+            {
+                auto token = this->Peek(1);
+                if(token)
+                {
+                    this->buffer_.pop_front();
+                }
+
+                return token;
+            }
+
+            TokenStream(Tokenizer<G> const &tokenizer, std::string_view input) : tokenizer_(tokenizer), input_(input) {}
+        };
+
+        /**
+         * Generate stream of tokens from an std::string_view.
+         * @param input
+         * @return
+         */
+        TokenStream StreamInput(std::string_view input)
+        {
+            return TokenStream(*this, input);
+        }
     };
 
     /**
