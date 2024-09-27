@@ -48,7 +48,7 @@ bf::NonTerminal<G> statement
     ;
 
 bf::Grammar grammar(statement);
-bf::SLRParser calculator(grammar);
+bf::SLRParser calculator(tok, grammar);
 
 TEST(Lang, BasicParsing)
 {

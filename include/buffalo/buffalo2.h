@@ -285,6 +285,12 @@ namespace bf
         NonTerminal(std::initializer_list<ProductionRule<G>> const &rules) : rules_(rules) {}
     };
 
+    /**
+     * SYMBOL
+     */
+    template<IGrammar G>
+    using Symbol = std::variant<Terminal<G>, NonTerminal<G>*>;
+
     /*
      * PRODUCTION RULES
      */
@@ -294,7 +300,7 @@ namespace bf
         friend class Grammar<G>;
 
         typename G::TransductorType transductor_;
-        std::vector<std::variant<Terminal<G>, NonTerminal<G>*>> sequence_;
+        std::vector<Symbol<G>> sequence_;
 
     public:
         ProductionRule &operator+(Terminal<G> const &rhs)
@@ -469,17 +475,73 @@ namespace bf
         return {lhs, rhs};
     }
 
-    /*
-     * PARSER
+    /**
+     * LR ITEM
+     * @tparam G
      */
     template<IGrammar G>
-    class Parser {};
+    struct LRItem
+    {
+        ProductionRule<G> const *rule;
+        std::size_t position;
 
+        [[nodiscard]] bool Complete() const
+        {
+            return this->position >= this->rule->sequence_.size();
+        }
+
+        [[nodiscard]] LRItem Advance() const
+        {
+            return LRItem(this->rule, this->position + 1);
+        }
+
+        [[nodiscard]] Symbol<G> NextSymbol() const
+        {
+            return this->rule->sequence_[this->position];
+        }
+
+        LRItem() = delete;
+
+        explicit LRItem(ProductionRule<G> const *rule, int position = 0) : rule(rule), position(position) {}
+    };
+
+    /**
+     * LR State
+     * @tparam G
+     */
+    template<IGrammar G>
+    struct LRState
+    {
+        std::vector<LRItem<G>> kernel_items;
+    };
+
+    /**
+     * PARSER
+     * @tparam G
+     */
+    template<IGrammar G>
+    class Parser
+    {
+    public:
+        virtual std::expected<typename G::ValueType, Error> Parse(std::string_view input) = 0;
+    };
+
+    /**
+     * SLR PARSER
+     * @tparam G
+     */
     template<IGrammar G>
     class SLRParser : public Parser<G>
     {
+        Tokenizer<G> const &tokenizer_;
+        Grammar<G> const &grammar_;
+
     public:
-        SLRParser(Grammar<G> grammar) {}
+        std::expected<typename G::ValueType, Error> Parse(std::string_view input) override
+        {
+        }
+
+        SLRParser(Tokenizer<G> const &tokenizer, Grammar<G> const &grammar) : tokenizer_(tokenizer), grammar_(grammar) {}
     };
 }
 
