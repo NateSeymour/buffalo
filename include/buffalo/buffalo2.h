@@ -63,6 +63,12 @@ namespace bf
     template<IGrammar G>
     class NonTerminal;
 
+    template<IGrammar G>
+    struct LRItem;
+
+    template<IGrammar G>
+    struct LRState;
+
     /**
      * ERROR
      */
@@ -256,7 +262,7 @@ namespace bf
     public:
         Terminal() = default;
 
-        Terminal(Tokenizer<G> &tok, Tokenizer<G>::LexxerType lexxer = nullptr, typename G:: ReasonerType reasoner = nullptr) : reasoner_(reasoner)
+        Terminal(Tokenizer<G> &tok, typename Tokenizer<G>::LexxerType lexxer = nullptr, typename G:: ReasonerType reasoner = nullptr) : reasoner_(reasoner)
         {
             tok.RegisterTerminal(this, lexxer);
         }
@@ -269,7 +275,9 @@ namespace bf
     class NonTerminal : StaticallyIdentifiedObject
     {
         friend class Grammar<G>;
+        friend struct LRState<G>;
 
+    protected:
         std::vector<ProductionRule<G>> rules_;
 
     public:
@@ -298,6 +306,7 @@ namespace bf
     class ProductionRule
     {
         friend class Grammar<G>;
+        friend struct LRItem<G>;
 
         typename G::TransductorType transductor_;
         std::vector<Symbol<G>> sequence_;
@@ -338,6 +347,8 @@ namespace bf
         std::map<NonTerminal<G>*, std::set<Terminal<G>>> follow_;
 
     public:
+        NonTerminal<G> const &root;
+
         void ProcessNonTerminalFirstSet(NonTerminal<G> *nonterminal)
         {
             for(auto &rule : nonterminal->rules_)
@@ -434,7 +445,7 @@ namespace bf
             }
         }
 
-        Grammar(NonTerminal<G> &start)
+        Grammar(NonTerminal<G> &start) : root(start)
         {
             this->RegisterAllSymbols(&start);
             this->ProcessNonTerminalFirstSet(&start);
@@ -500,9 +511,19 @@ namespace bf
             return this->rule->sequence_[this->position];
         }
 
-        LRItem() = delete;
+        bool operator==(LRItem const &other) const
+        {
+            return this->rule == other.rule && this->position == other.position;
+        }
 
-        explicit LRItem(ProductionRule<G> const *rule, int position = 0) : rule(rule), position(position) {}
+        bool operator<(LRItem const &other) const
+        {
+            return this->rule == other.rule && this->position < other.position;
+        }
+
+        LRItem(ProductionRule<G> const *rule, int position = 0) : rule(rule), position(position) {}
+
+        LRItem() = delete;
     };
 
     /**
@@ -513,6 +534,88 @@ namespace bf
     struct LRState
     {
         std::vector<LRItem<G>> kernel_items;
+
+        std::vector<LRItem<G>> GenerateClosure() const
+        {
+            std::vector<LRItem<G>> closure = this->kernel_items;
+            std::set<NonTerminal<G>*> closed_nonterminals;
+
+            for(int i = 0; i < closure.size(); i++)
+            {
+                if(closure[i].Complete()) continue;
+
+                std::visit(overload{
+                    [](Terminal<G> terminal) { /* Do Nothing */ },
+                    [&](NonTerminal<G> *non_terminal)
+                    {
+                        if(closed_nonterminals.contains(non_terminal)) return;
+                        closed_nonterminals.insert(non_terminal);
+
+                        for(auto const &rule : non_terminal->rules_)
+                        {
+                            closure.emplace_back(&rule);
+                        }
+                    }
+                }, closure[i].NextSymbol());
+            }
+
+            return closure;
+        }
+
+        std::map<Symbol<G>, LRState<G>> GenerateTransitions() const
+        {
+            std::map<Symbol<G>, LRState<G>> transitions;
+
+            auto closure = this->GenerateClosure();
+
+            for(auto const &item : closure)
+            {
+                if(item.Complete()) continue;
+
+                transitions[item.NextSymbol()].kernel_items.push_back(item.Advance());
+            }
+
+            return transitions;
+        }
+
+        /**
+         * This is very slow and needs to be remedied.
+         * @param other
+         * @return
+         */
+        bool operator==(LRState const &other) const
+        {
+            if(this->kernel_items.size() != other.kernel_items.size()) return false;
+
+            for(int i = 0; i < this->kernel_items.size(); i++)
+            {
+                if(this->kernel_items[i] != other.kernel_items[i]) return false;
+            }
+
+            return true;
+        }
+
+        bool operator<(LRState const &other) const
+        {
+            if(this->kernel_items.size() < other.kernel_items.size()) return true;
+
+            for(int i = 0; i < this->kernel_items.size(); i++)
+            {
+                if(this->kernel_items[i] < other.kernel_items[i]) return true;
+            }
+
+            return false;
+        }
+
+        LRState(NonTerminal<G> const *start)
+        {
+            for(auto const &rule : start->rules_)
+            {
+                this->kernel_items.emplace_back(&rule);
+            }
+        }
+
+        LRState() = default;
     };
 
     /**
@@ -536,12 +639,32 @@ namespace bf
         Tokenizer<G> const &tokenizer_;
         Grammar<G> const &grammar_;
 
+        std::map<LRState<G>, std::map<Symbol<G>, LRState<G>>> lr0_fsm_;
+
     public:
         std::expected<typename G::ValueType, Error> Parse(std::string_view input) override
         {
         }
 
-        SLRParser(Tokenizer<G> const &tokenizer, Grammar<G> const &grammar) : tokenizer_(tokenizer), grammar_(grammar) {}
+        void GenerateStates(LRState<G> const &state)
+        {
+            auto transitions = state.GenerateTransitions();
+            this->lr0_fsm_[state] = transitions;
+
+            for(auto const &[symbol, new_state] : transitions)
+            {
+                if(state == new_state) continue;
+
+                this->GenerateStates(new_state);
+            }
+        }
+
+        SLRParser(Tokenizer<G> const &tokenizer, Grammar<G> const &grammar) : tokenizer_(tokenizer), grammar_(grammar)
+        {
+            // Generate parser tables
+            LRState<G> root_state(&grammar.root);
+            this->GenerateStates(root_state);
+        }
     };
 }
 

@@ -12,7 +12,7 @@ using G = bf::GrammarDefinition<ValueType>;
 
 spex::CTRETokenizer<G> tok;
 
-bf::Terminal<G> NUMBER(tok, tok.GenLex<R"(\d*\.?\d*)">(), [](auto &tok) -> ValueType {
+bf::Terminal NUMBER(tok, tok.GenLex<R"(\d*\.?\d*)">(), [](auto &tok) -> ValueType {
     return 0.0;
 });
 
@@ -22,8 +22,8 @@ bf::Terminal<G> OP_ADDITION;
 bf::Terminal<G> OP_ASSIGNMENT;
 bf::Terminal<G> END;
 
-bf::NonTerminal<G> expression =
-    bf::ProductionRule(NUMBER)<=>[](auto &$) -> ValueType
+bf::NonTerminal<G> expression
+    = bf::ProductionRule(NUMBER)<=>[](auto &$) -> ValueType
     {
         return std::get<double>($[0]);
     }
