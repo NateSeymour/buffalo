@@ -8,6 +8,7 @@
 #include <map>
 #include <set>
 #include <stack>
+#include <ranges>
 
 namespace bf
 {
@@ -73,6 +74,23 @@ namespace bf
      * ERROR
      */
     class Error {};
+
+    /**
+     * PRODUCTION RULE LIST
+     * @tparam G
+     */
+    template<IGrammar G>
+    struct ProductionRuleList
+    {
+        std::vector<ProductionRule<G>> rules;
+
+        ProductionRuleList &operator|(ProductionRule<G> const &rule)
+        {
+            this->rules.push_back(rule);
+
+            return *this;
+        }
+    };
 
     /**
      * LOCATION
@@ -281,16 +299,14 @@ namespace bf
         std::vector<ProductionRule<G>> rules_;
 
     public:
-        // WARNING: This will soon cause many issues and headaches!!!
-        NonTerminal &operator|(ProductionRule<G> const &rhs)
-        {
-            this->rules_.push_back(rhs);
-            return *this;
-        }
+        NonTerminal(NonTerminal  &) = delete;
+        NonTerminal(NonTerminal &&) = delete;
+
         NonTerminal() = default;
 
         NonTerminal(ProductionRule<G> const &rule) : rules_({rule}) {}
         NonTerminal(std::initializer_list<ProductionRule<G>> const &rules) : rules_(rules) {}
+        NonTerminal(ProductionRuleList<G> const &rule_list) : rules_(rule_list.rules) {}
     };
 
     /**
@@ -331,6 +347,18 @@ namespace bf
             this->transductor_ = tranductor;
 
             return *this;
+        }
+
+        bool operator==(ProductionRule<G> const &other) const
+        {
+            if(this->sequence_.size() != other.sequence_.size()) return false;
+
+            for(auto const &[first, second] : std::views::zip(this->sequence_, other.sequence_))
+            {
+                if(first != second) return false;
+            }
+
+            return true;
         }
 
         ProductionRule(Terminal<G> const &terminal) : sequence_({ terminal }) {}
@@ -481,9 +509,9 @@ namespace bf
     }
 
     template<IGrammar G>
-    NonTerminal<G> operator|(ProductionRule<G> const &lhs, ProductionRule<G> const &rhs)
+    ProductionRuleList<G> operator|(ProductionRule<G> const &lhs, ProductionRule<G> const &rhs)
     {
-        return {lhs, rhs};
+        return ProductionRuleList<G>() | lhs | rhs;
     }
 
     /**
@@ -513,12 +541,7 @@ namespace bf
 
         bool operator==(LRItem const &other) const
         {
-            return this->rule == other.rule && this->position == other.position;
-        }
-
-        bool operator<(LRItem const &other) const
-        {
-            return this->rule == other.rule && this->position < other.position;
+            return *this->rule == *other.rule && this->position == other.position;
         }
 
         LRItem(ProductionRule<G> const *rule, int position = 0) : rule(rule), position(position) {}
@@ -595,18 +618,6 @@ namespace bf
             return true;
         }
 
-        bool operator<(LRState const &other) const
-        {
-            if(this->kernel_items.size() < other.kernel_items.size()) return true;
-
-            for(int i = 0; i < this->kernel_items.size(); i++)
-            {
-                if(this->kernel_items[i] < other.kernel_items[i]) return true;
-            }
-
-            return false;
-        }
-
         LRState(NonTerminal<G> const *start)
         {
             for(auto const &rule : start->rules_)
@@ -616,6 +627,21 @@ namespace bf
         }
 
         LRState() = default;
+    };
+
+    /**
+     * LR STATE HASHER
+     * Helper class to hash LRState<G> for storage in std::unordered_map
+     * @tparam G
+     */
+    template<IGrammar G>
+    struct LRStateHasher
+    {
+        std::size_t operator()(LRState<G> const &state) const noexcept
+        {
+            // TODO: Perform an actual hash operation on the state!
+            return 0;
+        }
     };
 
     /**
@@ -639,7 +665,7 @@ namespace bf
         Tokenizer<G> const &tokenizer_;
         Grammar<G> const &grammar_;
 
-        std::map<LRState<G>, std::map<Symbol<G>, LRState<G>>> lr0_fsm_;
+        std::unordered_map<LRState<G>, std::map<Symbol<G>, LRState<G>>, LRStateHasher<G>> lr0_fsm_;
 
     public:
         std::expected<typename G::ValueType, Error> Parse(std::string_view input) override
@@ -648,11 +674,17 @@ namespace bf
 
         void GenerateStates(LRState<G> const &state)
         {
+            if(!this->lr0_fsm_.contains(state))
+            {
+                this->lr0_fsm_.insert({state, {}});
+            }
+
             auto transitions = state.GenerateTransitions();
-            this->lr0_fsm_[state] = transitions;
 
             for(auto const &[symbol, new_state] : transitions)
             {
+                this->lr0_fsm_[state][symbol] = new_state;
+
                 if(state == new_state) continue;
 
                 this->GenerateStates(new_state);
@@ -661,9 +693,12 @@ namespace bf
 
         SLRParser(Tokenizer<G> const &tokenizer, Grammar<G> const &grammar) : tokenizer_(tokenizer), grammar_(grammar)
         {
-            // Generate parser tables
+            // Generate lr0 state machine
             LRState<G> root_state(&grammar.root);
             this->GenerateStates(root_state);
+
+            // Generate parsing tables
+
         }
     };
 }
