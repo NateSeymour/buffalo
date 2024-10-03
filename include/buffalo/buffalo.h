@@ -45,7 +45,6 @@ namespace bf
          * TYPES
          */
         typename T::ValueType;
-        typename T::ReasonerType;
         typename T::TransductorType;
     };
 
@@ -113,9 +112,11 @@ namespace bf
     /**
      * TOKEN
      */
+    template<IGrammar G>
     struct Token
     {
-        std::size_t terminal_id;
+        Terminal<G> terminal;
+        std::string_view raw;
         Location location;
 
         std::size_t Size() const
@@ -132,7 +133,7 @@ namespace bf
     class Tokenizer
     {
     public:
-        using LexxerType = std::optional<Token>(*)(Terminal<G>*, std::string_view);
+        using LexxerType = std::optional<Token<G>>(*)(Terminal<G>*, std::string_view);
 
         /**
          * Ideally would be defined as a normal const member (Terminal<G> const EOS), but since the Terminal<G> constructor
@@ -158,7 +159,7 @@ namespace bf
          * @param input
          * @return
          */
-        virtual std::expected<Token, Error> First(std::string_view input) const = 0;
+        virtual std::expected<Token<G>, Error> First(std::string_view input) const = 0;
 
         /**
          * Helper to create a stream of tokens from string_view.
@@ -170,14 +171,20 @@ namespace bf
 
             Tokenizer<G> const &tokenizer_;
 
-            std::deque<Token> buffer_;
+            std::deque<Token<G>> buffer_;
 
         public:
-            std::optional<Token> Peek(std::size_t lookahead = 1)
+            std::optional<Token<G>> Peek(std::size_t lookahead = 1)
             {
                 // Fill buffer to requested lookahead
                 for(int i = 0; i < lookahead - buffer_.size(); i++)
                 {
+                    while(!this->input_.empty() && std::isspace(this->input_[0]))
+                    {
+                        this->input_ = this->input_.substr(1);
+                        this->index_++;
+                    }
+
                     auto token = this->tokenizer_.First(this->input_);
                     if(!token)
                     {
@@ -198,9 +205,11 @@ namespace bf
                 {
                     return this->buffer_[lookahead - 1];
                 }
+
+                return std::nullopt;
             }
 
-            std::optional<Token> Consume()
+            std::optional<Token<G>> Consume()
             {
                 auto token = this->Peek(1);
                 if(token)
@@ -239,7 +248,6 @@ namespace bf
          * TYPES
          */
         using ValueType = GValueType;
-        using ReasonerType = ValueType(*)(Token&);
         using TransductorType = std::function<ValueType(std::vector<ValueType> const&)>;
     };
 
@@ -297,12 +305,26 @@ namespace bf
     {
         friend class Grammar<G>;
 
-        typename G::ReasonerType reasoner_ = nullptr;
+    public:
+        using ReasonerType = typename G::ValueType(*)(Token<G> const&);
+
+    protected:
+        ReasonerType reasoner_ = nullptr;
 
     public:
+        typename G::ValueType Reason(Token<G> const &token) const
+        {
+            if(this->reasoner_)
+            {
+                return this->reasoner_(token);
+            }
+
+            return std::monostate();
+        }
+
         Terminal() = default;
 
-        Terminal(Tokenizer<G> &tok, typename Tokenizer<G>::LexxerType lexxer = nullptr, typename G:: ReasonerType reasoner = nullptr) : reasoner_(reasoner)
+        Terminal(Tokenizer<G> &tok, typename Tokenizer<G>::LexxerType lexxer = nullptr, ReasonerType reasoner = nullptr) : reasoner_(reasoner)
         {
             tok.RegisterTerminal(this, lexxer);
         }
@@ -312,7 +334,7 @@ namespace bf
      * NON-TERMINAL
      */
     template<IGrammar G>
-    class NonTerminal : StaticallyIdentifiedObject
+    class NonTerminal : public StaticallyIdentifiedObject
     {
         friend class Grammar<G>;
         friend struct LRState<G>;
@@ -349,10 +371,10 @@ namespace bf
         friend class SLRParser<G>;
 
     protected:
-        typename G::TransductorType transductor_;
+        typename G::TransductorType transductor_ = nullptr;
         std::vector<Symbol<G>> sequence_;
 
-        NonTerminal<G> const *non_terminal_;
+        NonTerminal<G> *non_terminal_;
 
     public:
         ProductionRule &operator+(Terminal<G> const &rhs)
@@ -386,6 +408,16 @@ namespace bf
             }
 
             return true;
+        }
+
+        typename G::ValueType Transduce(std::vector<typename G::ValueType> const &args) const
+        {
+            if(this->transductor_)
+            {
+                return this->transductor_(args);
+            }
+
+            return std::monostate();
         }
 
         ProductionRule(Terminal<G> const &terminal) : sequence_({ terminal }) {}
@@ -691,8 +723,8 @@ namespace bf
      */
     enum class LRActionType
     {
-        kAccept,
         kError,
+        kAccept,
         kShift,
         kReduce,
     };
@@ -705,7 +737,7 @@ namespace bf
     struct LRAction
     {
         LRActionType type;
-        std::optional<LRState<G>> action = std::nullopt;
+        std::variant<LRState<G>, ProductionRule<G> const*> action;
     };
 
     /**
@@ -738,10 +770,72 @@ namespace bf
         std::unordered_map<LRState<G>, std::map<NonTerminal<G>*, LRState<G>>, LRStateHasher<G>> goto_;
 
     public:
+        struct ParseStackItem
+        {
+            LRState<G> state;
+            typename G::ValueType value;
+
+            ParseStackItem(LRState<G> state) : state(state) {}
+            ParseStackItem(LRState<G> state, typename G::ValueType value) : state(state), value(value) {}
+        };
+
         std::expected<typename G::ValueType, Error> Parse(std::string_view input) override
         {
             auto token_stream = this->grammar_.tokenizer.StreamInput(input);
-            std::stack<LRState<G>> states;
+
+            std::stack<ParseStackItem> parse_stack;
+            parse_stack.emplace(this->root_state);
+
+            while(true)
+            {
+                std::optional<Token<G>> lookahead = token_stream.Peek();
+                if(!lookahead)
+                {
+                    return std::unexpected(Error{});
+                }
+
+                LRAction<G> action = this->action_[parse_stack.top().state][lookahead->terminal];
+                switch(action.type)
+                {
+                    case LRActionType::kAccept:
+                    {
+                        break;
+                    }
+
+                    case LRActionType::kShift:
+                    {
+                        auto value = lookahead->terminal.Reason(*lookahead);
+
+                        parse_stack.emplace(std::get<LRState<G>>(action.action), value);
+                        token_stream.Consume();
+                        break;
+                    }
+
+                    case LRActionType::kReduce:
+                    {
+                        auto rule = std::get<ProductionRule<G> const*>(action.action);
+                        std::vector<typename G::ValueType> args(rule->sequence_.size());
+
+                        for(int i = rule->sequence_.size() - 1; i >= 0; i--)
+                        {
+                            auto &top = parse_stack.top();
+
+                            args[i] = top.value;
+
+                            parse_stack.pop();
+                        }
+
+                        auto value = rule->Transduce(args);
+                        parse_stack.emplace(this->goto_[parse_stack.top().state][rule->non_terminal_], value);
+                        break;
+                    }
+
+                    default:
+                    {
+                        return std::unexpected(Error{});
+                    }
+                }
+            }
         }
 
         void ProcessState(LRState<G> const &state)
@@ -788,15 +882,14 @@ namespace bf
             {
                 if(item.Complete())
                 {
-                    // TODO: Clean up this absolute monstrosity
-                    auto non_terminal = const_cast<NonTerminal<G> *>(item.rule->non_terminal_);
-                    auto const &follow_set = this->grammar_.follow_[non_terminal];
+                    auto const &follow_set = this->grammar_.follow_[item.rule->non_terminal_];
                     for(auto follow_terminal : follow_set)
                     {
-                        LRActionType action = *non_terminal == grammar_.root ? LRActionType::kAccept : LRActionType::kReduce;
+                        LRActionType action = *item.rule->non_terminal_ == grammar_.root ? LRActionType::kAccept : LRActionType::kReduce;
 
                         this->action_[state][follow_terminal] = {
                             .type = action,
+                            .action = item.rule,
                         };
                     }
                 }

@@ -6,6 +6,7 @@
 #include <ctre.hpp>
 #include <map>
 #include <string_view>
+#include <cctype>
 
 namespace spex
 {
@@ -20,12 +21,12 @@ namespace spex
             this->lexxers_[terminal] = lexxer;
         }
 
-        std::expected<bf::Token, bf::Error> First(std::string_view input) const override
+        std::expected<bf::Token<G>, bf::Error> First(std::string_view input) const override
         {
             if(input.empty())
             {
-                return {
-                    .terminal_id = this->EOS().id,
+                return bf::Token<G> {
+                    .terminal = this->EOS(),
                     .location = {
                         .begin = 0,
                         .end = 0,
@@ -49,7 +50,7 @@ namespace spex
         template<ctll::fixed_string regex>
         constexpr typename bf::Tokenizer<G>::LexxerType GenLex() const
         {
-            return [](bf::Terminal<G> *terminal, std::string_view input) -> std::optional<bf::Token>
+            return [](bf::Terminal<G> *terminal, std::string_view input) -> std::optional<bf::Token<G>>
             {
                 auto match = ctre::starts_with<regex>(input);
 
@@ -58,8 +59,9 @@ namespace spex
                     return std::nullopt;
                 }
 
-                return bf::Token {
-                    .terminal_id = terminal->id,
+                return bf::Token<G> {
+                    .terminal = *terminal,
+                    .raw = match.view(),
                     .location = {
                         .begin = 0,
                         .end = match.size(),
