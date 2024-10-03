@@ -1,11 +1,11 @@
 #ifndef SPEX_H
 #define SPEX_H
 
+#include <buffalo/buffalo.h>
+#include <ctll.hpp>
+#include <ctre.hpp>
 #include <map>
 #include <string_view>
-#include <ctre.hpp>
-#include <ctll.hpp>
-#include <buffalo/buffalo2.h>
 
 namespace spex
 {
@@ -22,6 +22,17 @@ namespace spex
 
         std::expected<bf::Token, bf::Error> First(std::string_view input) const override
         {
+            if(input.empty())
+            {
+                return {
+                    .terminal_id = this->EOS().id,
+                    .location = {
+                        .begin = 0,
+                        .end = 0,
+                    },
+                };
+            }
+
             for(auto const [terminal, lexxer] : this->lexxers_)
             {
                 auto token = lexxer(terminal, input);
@@ -36,7 +47,7 @@ namespace spex
         }
 
         template<ctll::fixed_string regex>
-        constexpr bf::Tokenizer<G>::LexxerType GenLex() const
+        constexpr typename bf::Tokenizer<G>::LexxerType GenLex() const
         {
             return [](bf::Terminal<G> *terminal, std::string_view input) -> std::optional<bf::Token>
             {
@@ -51,7 +62,7 @@ namespace spex
                     .terminal_id = terminal->id,
                     .location = {
                         .begin = 0,
-                        .end = 0,
+                        .end = match.size(),
                     },
                 };
             };

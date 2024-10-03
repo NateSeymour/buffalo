@@ -1,8 +1,8 @@
+#include <buffalo/buffalo.h>
+#include <buffalo/spex.h>
+#include <gtest/gtest.h>
 #include <string>
 #include <variant>
-#include <gtest/gtest.h>
-#include <buffalo/buffalo2.h>
-#include <buffalo/spex.h>
 
 /*
  * Grammar Definition
@@ -47,8 +47,8 @@ bf::NonTerminal<G> statement
     | bf::ProductionRule(variable_declaration)
     ;
 
-bf::Grammar grammar(statement);
-bf::SLRParser calculator(tok, grammar);
+bf::Grammar grammar(tok, statement);
+bf::SLRParser calculator(grammar);
 
 TEST(Lang, BasicParsing)
 {
