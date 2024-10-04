@@ -374,7 +374,7 @@ namespace bf
         typename G::TransductorType transductor_ = nullptr;
         std::vector<Symbol<G>> sequence_;
 
-        NonTerminal<G> *non_terminal_;
+        NonTerminal<G> *non_terminal_ = nullptr;
 
     public:
         ProductionRule &operator+(Terminal<G> const &rhs)
@@ -434,6 +434,8 @@ namespace bf
         friend class SLRParser<G>;
 
     protected:
+        std::set<NonTerminal<G>*> registered_nonterminals_;
+        std::set<NonTerminal<G>*> first_processed_nonterminals_;
         std::map<NonTerminal<G>*, std::set<Terminal<G>>> first_;
         std::map<NonTerminal<G>*, std::set<Terminal<G>>> follow_;
 
@@ -443,26 +445,35 @@ namespace bf
 
         void ProcessNonTerminalFirstSet(NonTerminal<G> *nonterminal)
         {
+            this->first_processed_nonterminals_.insert(nonterminal);
+
             for(auto &rule : nonterminal->rules_)
             {
-                rule.non_terminal_ = nonterminal;
+                for(int i = 0; i < rule.sequence_.size(); i++)
+                {
+                    auto &symbol = rule.sequence_[i];
 
-                if(rule.sequence_.empty()) continue;
+                    std::visit(overload{
+                        [&](Terminal<G> terminal)
+                        {
+                            if(i == 0)
+                            {
+                                this->first_[nonterminal].insert(terminal);
+                            }
+                        },
+                        [&](NonTerminal<G> *child_nonterminal)
+                        {
+                            if(this->first_processed_nonterminals_.contains(child_nonterminal)) return;
 
-                auto &symbol = rule.sequence_[0];
-                std::visit(overload{
-                    [&](Terminal<G> terminal)
-                    {
-                        this->first_[nonterminal].insert(terminal);
-                    },
-                    [&](NonTerminal<G> *child_nonterminal)
-                    {
-                        if(nonterminal == child_nonterminal) return;
+                            this->ProcessNonTerminalFirstSet(child_nonterminal);
 
-                        this->ProcessNonTerminalFirstSet(child_nonterminal);
-                        this->first_[nonterminal].insert(this->first_[child_nonterminal].begin(), this->first_[child_nonterminal].end());
-                    }
-                }, symbol);
+                            if(i == 0)
+                            {
+                                this->first_[nonterminal].insert(this->first_[child_nonterminal].begin(), this->first_[child_nonterminal].end());
+                            }
+                        }
+                    }, symbol);
+                }
             }
         }
 
@@ -476,16 +487,32 @@ namespace bf
                 {
                     for(auto const &rule : nonterminal->rules_)
                     {
-                        for(int i = 0; i < rule.sequence_.size() - 1; i++)
+                        for(int i = 0; i < rule.sequence_.size(); i++)
                         {
                             auto &symbol = rule.sequence_[i];
-                            auto &follow = rule.sequence_[i + 1];
 
                             // Skip over terminals
                             if(std::holds_alternative<Terminal<G>>(symbol)) continue;
 
-                            // Add to NonTerminal FOLLOW set
                             auto observed_nonterminal = std::get<NonTerminal<G>*>(symbol);
+
+                            // If the final symbol is NonTerminal, then give it all of our follow.
+                            if(i == rule.sequence_.size() - 1)
+                            {
+                                std::size_t follow_set_size = this->follow_[observed_nonterminal].size();
+
+                                this->follow_[observed_nonterminal].insert(this->follow_[nonterminal].begin(), this->follow_[nonterminal].end());
+
+                                if(this->follow_[observed_nonterminal].size() > follow_set_size)
+                                {
+                                    has_change = true;
+                                }
+
+                                break;
+                            }
+
+                            // Add to NonTerminal FOLLOW set
+                            auto &follow = rule.sequence_[i + 1];
 
                             has_change = std::visit(overload{
                                 [&](Terminal<G> terminal)
@@ -517,28 +544,32 @@ namespace bf
             } while(has_change);
         }
 
-        void RegisterAllSymbols(NonTerminal<G> *nonterminal, bool root = false)
+        void RegisterAllSymbols(NonTerminal<G> *nonterminal, bool register_root = false)
         {
-            if(root)
+            this->registered_nonterminals_.insert(nonterminal);
+
+            if(register_root)
             {
-                this->first_[nonterminal] = { this->tokenizer.EOS() };
+                this->follow_[nonterminal] = { this->tokenizer.EOS() };
             }
             else
             {
-                this->first_[nonterminal] = {};
+                this->follow_[nonterminal] = {};
             }
 
-            this->follow_[nonterminal] = {};
+            this->first_[nonterminal] = {};
 
             for(auto &rule : nonterminal->rules_)
             {
+                rule.non_terminal_ = nonterminal;
+
                 for(auto &symbol : rule.sequence_)
                 {
                     std::visit(overload{
                         [](Terminal<G> terminal) { /* Do Nothing */ },
                         [&](NonTerminal<G> *child_nonterminal)
                         {
-                            if(nonterminal == child_nonterminal) return;
+                            if(this->registered_nonterminals_.contains(child_nonterminal)) return;
 
                             this->RegisterAllSymbols(child_nonterminal);
                         }
@@ -799,7 +830,7 @@ namespace bf
                 {
                     case LRActionType::kAccept:
                     {
-                        break;
+                        return parse_stack.top().value;
                     }
 
                     case LRActionType::kShift:
@@ -882,8 +913,7 @@ namespace bf
             {
                 if(item.Complete())
                 {
-                    auto const &follow_set = this->grammar_.follow_[item.rule->non_terminal_];
-                    for(auto follow_terminal : follow_set)
+                    for(auto follow_terminal : this->grammar_.follow_[item.rule->non_terminal_])
                     {
                         LRActionType action = *item.rule->non_terminal_ == grammar_.root ? LRActionType::kAccept : LRActionType::kReduce;
 

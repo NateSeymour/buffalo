@@ -28,7 +28,14 @@ target_link_libraries(buffalo INTERFACE ctre::ctre)
 
 # Tests
 add_executable(buffalo-test
-        test/lang.test.cpp
+        test/basic.test.cpp
 )
+
 target_link_libraries(buffalo-test PRIVATE buffalo GTest::gtest_main)
 target_include_directories(buffalo-test PRIVATE include)
+
+add_executable(buffalo-badjson
+        test/badjson.cpp
+)
+target_link_libraries(buffalo-badjson PRIVATE buffalo GTest::gtest_main)
+target_include_directories(buffalo-badjson PRIVATE include)

@@ -25,7 +25,7 @@ bf::NonTerminal<G> expression
     }
     | (expression + OP_ADDITION + NUMBER)<=>[](auto &$) -> ValueType
     {
-        return 0.0;
+        return std::get<double>($[0]) + std::get<double>($[2]);
     };
 
 bf::NonTerminal<G> statement
