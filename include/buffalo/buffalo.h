@@ -435,133 +435,118 @@ namespace bf
 
     protected:
         std::set<NonTerminal<G>*> registered_nonterminals_;
-        std::set<NonTerminal<G>*> first_processed_nonterminals_;
         std::map<NonTerminal<G>*, std::set<Terminal<G>>> first_;
         std::map<NonTerminal<G>*, std::set<Terminal<G>>> follow_;
 
+        /// List of all production rules along with their respective NonTerminal
+        std::vector<std::pair<NonTerminal<G>*, ProductionRule<G>>> production_rules_;
+
     public:
         Tokenizer<G> const &tokenizer;
-        NonTerminal<G> const &root;
+        NonTerminal<G> &root;
 
-        void ProcessNonTerminalFirstSet(NonTerminal<G> *nonterminal)
+        /**
+         * Simple, but somewhat inefficient algorithm for generating FIRST sets.
+         * The FIRST set is the set of all Terminals that a NonTerminal can begin with.
+         */
+        void GenerateFirstSet()
         {
-            this->first_processed_nonterminals_.insert(nonterminal);
-
-            for(auto &rule : nonterminal->rules_)
+            bool has_change = false;
+            do
             {
-                for(int i = 0; i < rule.sequence_.size(); i++)
+                for(auto const &[nonterminal, rule] : this->production_rules_)
                 {
-                    auto &symbol = rule.sequence_[i];
+                    if(rule.sequence_.empty()) continue;
 
-                    std::visit(overload{
+                    has_change = std::visit(overload{
                         [&](Terminal<G> terminal)
                         {
-                            if(i == 0)
-                            {
-                                this->first_[nonterminal].insert(terminal);
-                            }
+                            auto [it, inserted] = this->first_[nonterminal].insert(terminal);
+                            return inserted;
                         },
                         [&](NonTerminal<G> *child_nonterminal)
                         {
-                            if(this->first_processed_nonterminals_.contains(child_nonterminal)) return;
+                            auto &parent_first = this->first_[nonterminal];
+                            auto &child_first = this->first_[child_nonterminal];
 
-                            this->ProcessNonTerminalFirstSet(child_nonterminal);
+                            std::size_t parent_size = parent_first.size();
+                            parent_first.insert(child_first.begin(), child_first.end());
 
-                            if(i == 0)
-                            {
-                                this->first_[nonterminal].insert(this->first_[child_nonterminal].begin(), this->first_[child_nonterminal].end());
-                            }
+                            return parent_size != parent_first.size();
                         }
-                    }, symbol);
+                    }, rule.sequence_[0]);
                 }
-            }
+            } while(has_change);
         }
 
-        void ProcessNonTerminalFollowSet()
+        /**
+         * Simple, but somewhat inefficient algorithm for generating FOLLOW sets.
+         * The FOLLOW set is the set of all Terminals that can follow a NonTerminal.
+         */
+        void GenerateFollowSet()
         {
-            bool has_change = false;
+            this->follow_[&root] = { this->tokenizer.EOS() };
 
+            bool has_change = false;
             do
             {
-                for(auto &[nonterminal, follow_set] : this->follow_)
+                for(auto &[nonterminal, rule] : this->production_rules_)
                 {
-                    for(auto const &rule : nonterminal->rules_)
+                    for(int i = 0; i < rule.sequence_.size(); i++)
                     {
-                        for(int i = 0; i < rule.sequence_.size(); i++)
+                        // Skip over Terminals
+                        if(std::holds_alternative<Terminal<G>>(rule.sequence_[i])) continue;
+
+                        // Process NonTerminal
+                        auto symbol = std::get<NonTerminal<G>*>(rule.sequence_[i]);
+
+                        // If this is the last NonTerminal in the sequence, then it gets all of the FOLLOW of parent.
+                        if(i == rule.sequence_.size() - 1)
                         {
-                            auto &symbol = rule.sequence_[i];
+                            auto &parent_follow = this->follow_[nonterminal];
+                            auto &child_follow = this->follow_[symbol];
 
-                            // Skip over terminals
-                            if(std::holds_alternative<Terminal<G>>(symbol)) continue;
+                            std::size_t child_size = child_follow.size();
+                            child_follow.insert(parent_follow.begin(), parent_follow.end());
 
-                            auto observed_nonterminal = std::get<NonTerminal<G>*>(symbol);
-
-                            // If the final symbol is NonTerminal, then give it all of our follow.
-                            if(i == rule.sequence_.size() - 1)
-                            {
-                                std::size_t follow_set_size = this->follow_[observed_nonterminal].size();
-
-                                this->follow_[observed_nonterminal].insert(this->follow_[nonterminal].begin(), this->follow_[nonterminal].end());
-
-                                if(this->follow_[observed_nonterminal].size() > follow_set_size)
-                                {
-                                    has_change = true;
-                                }
-
-                                break;
-                            }
-
-                            // Add to NonTerminal FOLLOW set
-                            auto &follow = rule.sequence_[i + 1];
-
-                            has_change = std::visit(overload{
-                                [&](Terminal<G> terminal)
-                                {
-                                    if(auto const [it, inserted] = this->follow_[observed_nonterminal].insert(terminal); inserted)
-                                    {
-                                        return true;
-                                    }
-
-                                    return false;
-                                },
-                                [&](NonTerminal<G> *child_nonterminal)
-                                {
-                                    std::size_t follow_set_size = this->follow_[observed_nonterminal].size();
-
-                                    this->follow_[observed_nonterminal].insert(this->first_[child_nonterminal].begin(), this->first_[child_nonterminal].end());
-
-                                    if(this->follow_[observed_nonterminal].size() > follow_set_size)
-                                    {
-                                        return true;
-                                    }
-
-                                    return false;
-                                }
-                            }, follow);
+                            has_change = child_size != child_follow.size();
+                            continue;
                         }
+
+                        // ELSE process the next token
+                        auto follow = rule.sequence_[i + 1];
+
+                        has_change = std::visit(overload{
+                            [&](Terminal<G> terminal)
+                            {
+                                auto [it, inserted] = this->follow_[symbol].insert(terminal);
+                                return inserted;
+                            },
+                            [&](NonTerminal<G> *follow_nonterminal)
+                            {
+                                auto &symbol_follow = this->follow_[symbol];
+                                auto &follow_first = this->first_[follow_nonterminal];
+
+                                std::size_t symbol_size = symbol_follow.size();
+                                symbol_follow.insert(follow_first.begin(), follow_first.end());
+
+                                return symbol_size != symbol_follow.size();
+                            }
+                        }, follow);
                     }
                 }
             } while(has_change);
         }
 
-        void RegisterAllSymbols(NonTerminal<G> *nonterminal, bool register_root = false)
+        void RegisterNonTerminals(NonTerminal<G> *nonterminal)
         {
             this->registered_nonterminals_.insert(nonterminal);
-
-            if(register_root)
-            {
-                this->follow_[nonterminal] = { this->tokenizer.EOS() };
-            }
-            else
-            {
-                this->follow_[nonterminal] = {};
-            }
-
-            this->first_[nonterminal] = {};
 
             for(auto &rule : nonterminal->rules_)
             {
                 rule.non_terminal_ = nonterminal;
+
+                this->production_rules_.push_back({nonterminal, rule});
 
                 for(auto &symbol : rule.sequence_)
                 {
@@ -571,7 +556,7 @@ namespace bf
                         {
                             if(this->registered_nonterminals_.contains(child_nonterminal)) return;
 
-                            this->RegisterAllSymbols(child_nonterminal);
+                            this->RegisterNonTerminals(child_nonterminal);
                         }
                     }, symbol);
                 }
@@ -580,9 +565,10 @@ namespace bf
 
         Grammar(Tokenizer<G> const &tokenizer, NonTerminal<G> &start) : tokenizer(tokenizer), root(start)
         {
-            this->RegisterAllSymbols(&start, true);
-            this->ProcessNonTerminalFirstSet(&start);
-            this->ProcessNonTerminalFollowSet();
+            this->RegisterNonTerminals(&start);
+
+            this->GenerateFirstSet();
+            this->GenerateFollowSet();
         }
     };
 
