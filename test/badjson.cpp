@@ -18,9 +18,9 @@ using G = bf::GrammarDefinition<ValueType>;
 
 spex::CTRETokenizer<G> tok;
 
-bf::Terminal<G> STRING(tok, tok.GenLex<R"(\"[a-zA-Z\s]+\")">(), [](auto &tok) -> ValueType {
+bf::Terminal<G> BOOLEAN(tok, tok.GenLex<"true|false">(), [](auto &tok) -> ValueType {
     return badjson::json {
-        .value = std::string(tok.raw.substr(1, -1)),
+        .value = tok.raw == "true",
     };
 });
 
@@ -30,27 +30,34 @@ bf::Terminal<G> NUMBER(tok, tok.GenLex<R"(\d+(\.\d+)?)">(), [](auto &tok) -> Val
     };
 });
 
-bf::Terminal<G> BOOLEAN(tok, tok.GenLex<"true|false">(), [](auto &tok) -> ValueType {
-    return badjson::json {
-        .value = tok.raw == "true",
-    };
-});
-
+bf::Terminal<G> QUOTATION(tok, tok.GenLex<"\"">());
 bf::Terminal<G> OBJ_OPEN(tok, tok.GenLex<"\\{">());
 bf::Terminal<G> OBJ_CLOSE(tok, tok.GenLex<"\\}">());
 bf::Terminal<G> PROPERTY_DELIMITER(tok, tok.GenLex<",">());
 bf::Terminal<G> PROPERTY_SEPERATOR(tok, tok.GenLex<":">());
 
+bf::Terminal<G> ALPHANUM(tok, tok.GenLex<R"([a-zA-Z\d]+)">(), [](auto &tok) -> ValueType {
+    return badjson::json {
+        .value = std::string(tok.raw),
+    };
+});
+
+bf::NonTerminal<G> string
+    = (QUOTATION + ALPHANUM + QUOTATION)<=>[](auto &$)
+    {
+        return $[1];
+    };
+
 extern bf::NonTerminal<G> json_object;
 
 bf::NonTerminal<G> json_basic_value
-    = bf::ProductionRule(STRING)<=>[](auto &$) { return $[0]; }
+    = bf::ProductionRule(string)<=>[](auto &$) { return $[0]; }
     | bf::ProductionRule(NUMBER)<=>[](auto &$) { return $[0]; }
     | bf::ProductionRule(BOOLEAN)<=>[](auto &$) { return $[0]; }
     | bf::ProductionRule(json_object)<=>[](auto &$) { return $[0]; };
 
 bf::NonTerminal<G> property
-    = (STRING + PROPERTY_SEPERATOR + json_basic_value)<=>[](auto &$) -> ValueType
+    = (string + PROPERTY_SEPERATOR + json_basic_value)<=>[](auto &$) -> ValueType
     {
         return std::pair<std::string, badjson::json> {
             std::get<std::string>(std::get<badjson::json>($[0]).value),
@@ -95,11 +102,17 @@ TEST(BadJSON, SimpleDocument)
 {
     auto obj = json.Parse(R"(
         {
-            "My Key": "My Value",
+            "MyKey": "MyValue",
             "Number": 32.5,
             "boolean": false
         }
     )");
 
     ASSERT_TRUE(obj);
+
+    auto json_obj = std::get<std::map<std::string, badjson::json>>(std::get<badjson::json>(*obj).value);
+
+    ASSERT_EQ(std::get<std::string>(json_obj["My Key"].value), "My Value");
+    ASSERT_EQ(std::get<double>(json_obj["Number"].value), 32.5);
+    ASSERT_EQ(std::get<bool>(json_obj["boolean"].value), false);
 }
