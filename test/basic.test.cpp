@@ -12,11 +12,11 @@ using G = bf::GrammarDefinition<ValueType>;
 
 spex::CTRETokenizer<G> tok;
 
-bf::Terminal<G> NUMBER(tok, tok.GenLex<R"(\d+(\.\d+)?)">(), [](auto const &tok) -> ValueType {
+auto NUMBER = tok.Terminal<R"(\d+(\.\d+)?)">([](auto const &tok) -> ValueType {
     return std::stod(std::string(tok.raw));
 });
 
-bf::Terminal<G> OP_ADDITION(tok, tok.GenLex<R"(\+)">());
+auto OP_ADDITION = tok.Terminal<R"(\+)">();
 
 bf::NonTerminal<G> expression
     = bf::ProductionRule(NUMBER)<=>[](auto &$) -> ValueType

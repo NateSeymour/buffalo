@@ -128,31 +128,29 @@ namespace bf
     /**
      * TOKENIZER
      * Virtual class to expose the Tokenizer API.
+     * Child classes EXPECTED to create Terminal<G>'s.
      */
     template<IGrammar G>
     class Tokenizer
     {
     public:
-        using LexxerType = std::optional<Token<G>>(*)(Terminal<G>*, std::string_view);
+        using LexxerType = std::optional<Token<G>>(*)(Terminal<G>, std::string_view);
 
         /**
-         * Ideally would be defined as a normal const member (Terminal<G> const EOS), but since the Terminal<G> constructor
-         * depends on Tokenizer<G>, this is a workaround.
+         * Unique Terminal<G> (ensured uniqueness through StaticallyIdentifiedObject) that marks the end of a
+         * stream of tokens.
          * @return Unique EOS (End of Stream) terminal.
          */
-        Terminal<G> EOS() const
-        {
-            static Terminal<G> EOS;
-            return EOS;
-        }
+        Terminal<G> const EOS;
 
         /**
-         * Optional method to register a terminal relationship to a lexxer.
-         * Default implementation does nothing.
-         * @param terminal
-         * @param lexxer
+         * Creates a new generic Terminal
+         * @return
          */
-        virtual void RegisterTerminal(Terminal<G> *terminal, LexxerType lexxer) { /* Do Nothing */ }
+        Terminal<G> Generic(Terminal<G>::ReasonerType reasoner = nullptr) const
+        {
+            return Terminal<G>(reasoner);
+        }
 
         /**
          * Gets the first token on the input stream.
@@ -304,12 +302,15 @@ namespace bf
     class Terminal : public StaticallyIdentifiedObject
     {
         friend class Grammar<G>;
+        friend class Tokenizer<G>;
 
     public:
         using ReasonerType = typename G::ValueType(*)(Token<G> const&);
 
     protected:
         ReasonerType reasoner_ = nullptr;
+
+        Terminal(ReasonerType reasoner = nullptr) : reasoner_(reasoner) {}
 
     public:
         typename G::ValueType Reason(Token<G> const &token) const
@@ -320,13 +321,6 @@ namespace bf
             }
 
             return std::monostate();
-        }
-
-        Terminal() = default;
-
-        Terminal(Tokenizer<G> &tok, typename Tokenizer<G>::LexxerType lexxer = nullptr, ReasonerType reasoner = nullptr) : reasoner_(reasoner)
-        {
-            tok.RegisterTerminal(this, lexxer);
         }
     };
 
@@ -485,7 +479,7 @@ namespace bf
          */
         void GenerateFollowSet()
         {
-            this->follow_[&root] = { this->tokenizer.EOS() };
+            this->follow_[&root] = { this->tokenizer.EOS };
 
             bool has_change = false;
             do

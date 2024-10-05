@@ -13,20 +13,15 @@ namespace spex
     template<bf::IGrammar G>
     class CTRETokenizer : public bf::Tokenizer<G>
     {
-        std::map<bf::Terminal<G>*, typename bf::Tokenizer<G>::LexxerType> lexxers_;
+        std::map<bf::Terminal<G>, typename bf::Tokenizer<G>::LexxerType> lexxers_;
 
     public:
-        void RegisterTerminal(bf::Terminal<G> *terminal, bf::Tokenizer<G>::LexxerType lexxer) override
-        {
-            this->lexxers_[terminal] = lexxer;
-        }
-
         std::expected<bf::Token<G>, bf::Error> First(std::string_view input) const override
         {
             if(input.empty())
             {
                 return bf::Token<G> {
-                    .terminal = this->EOS(),
+                    .terminal = this->EOS,
                     .location = {
                         .begin = 0,
                         .end = 0,
@@ -34,7 +29,7 @@ namespace spex
                 };
             }
 
-            for(auto const [terminal, lexxer] : this->lexxers_)
+            for(auto const &[terminal, lexxer] : this->lexxers_)
             {
                 auto token = lexxer(terminal, input);
 
@@ -48,9 +43,11 @@ namespace spex
         }
 
         template<ctll::fixed_string regex>
-        constexpr typename bf::Tokenizer<G>::LexxerType GenLex() const
+        bf::Terminal<G> Terminal(bf::Terminal<G>::ReasonerType reasoner = nullptr)
         {
-            return [](bf::Terminal<G> *terminal, std::string_view input) -> std::optional<bf::Token<G>>
+            auto new_terminal = this->Generic(reasoner);
+
+            this->lexxers_[new_terminal] = [](bf::Terminal<G> terminal, std::string_view input) -> std::optional<bf::Token<G>>
             {
                 auto match = ctre::starts_with<regex>(input);
 
@@ -60,7 +57,7 @@ namespace spex
                 }
 
                 return bf::Token<G> {
-                    .terminal = *terminal,
+                    .terminal = terminal,
                     .raw = match.view(),
                     .location = {
                         .begin = 0,
@@ -68,6 +65,8 @@ namespace spex
                     },
                 };
             };
+
+            return new_terminal;
         }
     };
 }
