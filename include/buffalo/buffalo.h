@@ -9,6 +9,8 @@
 #include <set>
 #include <stack>
 #include <ranges>
+#include <type_traits>
+#include <exception>
 
 namespace bf
 {
@@ -63,6 +65,9 @@ namespace bf
     template<IGrammar G>
     class Terminal;
 
+    template<IGrammar G, typename SemanticType>
+    struct DefineTerminal;
+
     template<IGrammar G>
     class NonTerminal;
 
@@ -81,7 +86,13 @@ namespace bf
     /**
      * ERROR
      */
-    class Error {};
+    class Error : public std::runtime_error
+    {
+    public:
+        Error() : runtime_error("Generic Error") {}
+    };
+
+    class SemanticConversionError : public Error {};
 
     /**
      * PRODUCTION RULE LIST
@@ -239,6 +250,7 @@ namespace bf
      * @tparam GValueType
      */
     template<typename GValueType>
+    requires std::constructible_from<GValueType>
     class GrammarDefinition
     {
     public:
@@ -325,6 +337,34 @@ namespace bf
     };
 
     /**
+     * DEFINE TERMINAL
+     * @tparam G
+     */
+    template<IGrammar G, typename SemanticValue = void>
+    class DefineTerminal
+    {
+        Terminal<G> terminal_;
+
+    public:
+        operator Terminal<G> () { return  this->terminal_; }
+        operator Terminal<G>&() { return  this->terminal_; }
+        operator Terminal<G>*() { return &this->terminal_; }
+
+        SemanticValue operator()(typename G::ValueType value)
+        {
+            if(!std::holds_alternative<SemanticValue>(value))
+            {
+                throw SemanticConversionError();
+            }
+
+            return std::get<SemanticValue>(value);
+        }
+
+        DefineTerminal(Terminal<G> &&terminal) : terminal_(terminal) {}
+        DefineTerminal(Terminal<G>  &terminal) : terminal_(terminal) {}
+    };
+
+    /**
      * NON-TERMINAL
      */
     template<IGrammar G>
@@ -343,8 +383,36 @@ namespace bf
         NonTerminal() = default;
 
         NonTerminal(ProductionRule<G> const &rule) : rules_({rule}) {}
-        NonTerminal(std::initializer_list<ProductionRule<G>> const &rules) : rules_(rules) {}
         NonTerminal(ProductionRuleList<G> const &rule_list) : rules_(rule_list.rules) {}
+    };
+
+    /**
+     * DEFINE NON-TERMINAL
+     */
+    template<IGrammar G, typename SemanticValue = void>
+    class DefineNonTerminal
+    {
+        NonTerminal<G> nonterminal_;
+
+    public:
+        operator NonTerminal<G> () { return  this->nonterminal_; }
+        operator NonTerminal<G>&() { return  this->nonterminal_; }
+        operator NonTerminal<G>*() { return &this->nonterminal_; }
+
+        SemanticValue operator()(typename G::ValueType value)
+        {
+            if(!std::holds_alternative<SemanticValue>(value))
+            {
+                throw SemanticConversionError();
+            }
+
+            return std::get<SemanticValue>(value);
+        }
+
+        DefineNonTerminal(NonTerminal<G> &&nonterminal) : nonterminal_(nonterminal) {}
+        DefineNonTerminal(NonTerminal<G>  &nonterminal) : nonterminal_(nonterminal) {}
+        DefineNonTerminal(ProductionRule<G> const &rule) : nonterminal_(rule) {}
+        DefineNonTerminal(ProductionRuleList<G> const &rule_list) : nonterminal_(rule_list) {}
     };
 
     /**
@@ -417,6 +485,9 @@ namespace bf
         ProductionRule(Terminal<G> const &terminal) : sequence_({ terminal }) {}
         ProductionRule(NonTerminal<G> &nonterminal) : sequence_({ &nonterminal }) {}
     };
+
+    template<IGrammar G>
+    using PR = ProductionRule<G>;
 
     /*
      * GRAMMAR
@@ -569,28 +640,28 @@ namespace bf
     /*
      * PRODUCTION RULE COMPOSITION FUNCTIONS
      */
-    template<IGrammar G>
-    ProductionRule<G> operator+(Terminal<G> &lhs, Terminal<G> &rhs)
+    template<IGrammar G, typename LhsType, typename RhsType>
+    ProductionRule<G> operator+(DefineTerminal<G, LhsType> &lhs, DefineTerminal<G, RhsType> &rhs)
     {
-        return ProductionRule(lhs) + rhs;
+        return ProductionRule((Terminal<G>&)lhs) + (Terminal<G>&)rhs;
     }
 
-    template<IGrammar G>
-    ProductionRule<G> operator+(Terminal<G> &lhs, NonTerminal<G> &rhs)
+    template<IGrammar G, typename LhsType, typename RhsType>
+    ProductionRule<G> operator+(DefineTerminal<G, LhsType> &lhs, DefineNonTerminal<G, RhsType> &rhs)
     {
-        return ProductionRule(lhs) + rhs;
+        return ProductionRule((Terminal<G>&)lhs) + (NonTerminal<G>&)rhs;
     }
 
-    template<IGrammar G>
-    ProductionRule<G> operator+(NonTerminal<G> &lhs, NonTerminal<G> &rhs)
+    template<IGrammar G, typename LhsType, typename RhsType>
+    ProductionRule<G> operator+(DefineNonTerminal<G, LhsType> &lhs, DefineNonTerminal<G, RhsType> &rhs)
     {
-        return ProductionRule(lhs) + rhs;
+        return ProductionRule((NonTerminal<G>&)lhs) + (NonTerminal<G>&)rhs;
     }
 
-    template<IGrammar G>
-    ProductionRule<G> operator+(NonTerminal<G> &lhs, Terminal<G> &rhs)
+    template<IGrammar G, typename LhsType, typename RhsType>
+    ProductionRule<G> operator+(DefineNonTerminal<G, LhsType> &lhs, DefineTerminal<G, RhsType> &rhs)
     {
-        return ProductionRule(lhs) + rhs;
+        return ProductionRule((NonTerminal<G>&)lhs) + (Terminal<G>&)rhs;
     }
 
     template<IGrammar G>
@@ -805,7 +876,7 @@ namespace bf
                 std::optional<Token<G>> lookahead = token_stream.Peek();
                 if(!lookahead)
                 {
-                    return std::unexpected(Error{});
+                    return std::unexpected(Error());
                 }
 
                 LRAction<G> action = this->new_action_[parse_stack.top().state][lookahead->terminal];
@@ -845,7 +916,7 @@ namespace bf
 
                     default:
                     {
-                        return std::unexpected(Error{});
+                        return std::unexpected(Error());
                     }
                 }
             }

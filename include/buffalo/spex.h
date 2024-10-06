@@ -39,7 +39,7 @@ namespace spex
                 }
             }
 
-            return std::unexpected(bf::Error{});
+            return std::unexpected(bf::Error());
         }
 
         template<ctll::fixed_string regex>

@@ -12,45 +12,46 @@ using G = bf::GrammarDefinition<ValueType>;
 
 spex::CTRETokenizer<G> tok;
 
-auto NUMBER = tok.Terminal<R"(\d+(\.\d+)?)">([](auto const &tok) -> ValueType {
+bf::DefineTerminal<G, double> NUMBER = tok.Terminal<R"(\d+(\.\d+)?)">([](auto const &tok) -> ValueType {
     return std::stod(std::string(tok.raw));
 });
 
-auto OP_ADDITION = tok.Terminal<R"(\+)">();
+bf::DefineTerminal<G> OP_ADDITION = tok.Terminal<R"(\+)">();
 
-bf::NonTerminal<G> expression
-    = bf::ProductionRule(NUMBER)<=>[](auto &$) -> ValueType
+bf::DefineNonTerminal<G, double> expression
+    = bf::PR<G>(NUMBER)<=>[](auto &$) -> ValueType
     {
-        return std::get<double>($[0]);
+        return NUMBER($[0]);
     }
     | (expression + OP_ADDITION + NUMBER)<=>[](auto &$) -> ValueType
     {
-        return std::get<double>($[0]) + std::get<double>($[2]);
+        return expression($[0]) + NUMBER($[2]);
     };
 
-bf::NonTerminal<G> statement
-    = bf::ProductionRule(expression)<=>[](auto &$) -> ValueType
+bf::DefineNonTerminal<G, double> statement
+    = bf::PR<G>(expression)<=>[](auto &$) -> ValueType
     {
-        return std::get<double>($[0]);
+        return expression($[0]);
     }
     ;
 
-bf::Grammar grammar(tok, statement);
+bf::Grammar grammar(tok, (bf::NonTerminal<G>&)statement);
 bf::SLRParser calculator(grammar);
 
 TEST(Tokenizer, Tokenization)
 {
     auto stream = tok.StreamInput("32 + 32");
 
-    ASSERT_EQ(stream.Consume()->terminal, NUMBER);
-    ASSERT_EQ(stream.Consume()->terminal, OP_ADDITION);
-    ASSERT_EQ(stream.Consume()->terminal, NUMBER);
+    ASSERT_EQ(stream.Consume()->terminal, (bf::Terminal<G>)NUMBER);
+    ASSERT_EQ(stream.Consume()->terminal, (bf::Terminal<G>)OP_ADDITION);
+    ASSERT_EQ(stream.Consume()->terminal, (bf::Terminal<G>)NUMBER);
 }
 
 TEST(Lang, BasicParsing)
 {
-    auto res = calculator.Parse("32 + 32");
+    auto res = calculator.Parse("32 + 32 + 32 + 32");
 
     ASSERT_TRUE(res);
-    ASSERT_EQ(std::get<double>(*res), 64.0);
+
+    ASSERT_EQ(statement(*res), 128.0);
 }
