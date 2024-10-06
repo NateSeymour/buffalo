@@ -47,7 +47,6 @@ namespace bf
          * TYPES
          */
         typename T::ValueType;
-        typename T::TransductorType;
     };
 
     /*
@@ -264,7 +263,6 @@ namespace bf
          * TYPES
          */
         using ValueType = GValueType;
-        using TransductorType = std::function<ValueType(std::vector<ValueType> const&)>;
     };
 
     /**
@@ -341,14 +339,14 @@ namespace bf
         std::size_t precedence = this->id;
         Associativity associativity = Associativity::None;
 
-        typename G::ValueType Reason(Token<G> const &token) const
+        std::optional<typename G::ValueType> Reason(Token<G> const &token) const
         {
             if(this->reasoner_)
             {
                 return this->reasoner_(token);
             }
 
-            return std::monostate();
+            return std::nullopt;
         }
     };
 
@@ -362,12 +360,14 @@ namespace bf
     public:
         SemanticValue operator()(typename G::ValueType value)
         {
-            if(!std::holds_alternative<SemanticValue>(value))
+            if constexpr(std::variant_size<typename G::ValueType>::value != 0)
             {
-                throw SemanticConversionError();
+                return std::get<SemanticValue>(value);
             }
-
-            return std::get<SemanticValue>(value);
+            else
+            {
+                return std::move(reinterpret_cast<SemanticValue>(value));
+            }
         }
 
         DefineTerminal() = delete;
@@ -384,6 +384,9 @@ namespace bf
     {
         friend class Grammar<G>;
         friend struct LRState<G>;
+
+    public:
+        using TransductorType = typename G::ValueType(*)(std::vector<typename G::ValueType> &);
 
     protected:
         std::vector<ProductionRule<G>> rules_;
@@ -439,7 +442,7 @@ namespace bf
         friend class SLRParser<G>;
 
     protected:
-        typename G::TransductorType transductor_ = nullptr;
+        typename NonTerminal<G>::TransductorType transductor_ = nullptr;
         std::vector<Symbol<G>> sequence_;
         std::size_t precedence = -1;
 
@@ -460,7 +463,7 @@ namespace bf
             return *this;
         }
 
-        ProductionRule &operator<=>(typename G::TransductorType tranductor)
+        ProductionRule &operator<=>(typename NonTerminal<G>::TransductorType tranductor)
         {
             this->transductor_ = tranductor;
 
@@ -479,14 +482,14 @@ namespace bf
             return true;
         }
 
-        typename G::ValueType Transduce(std::vector<typename G::ValueType> const &args) const
+        std::optional<typename G::ValueType> Transduce(std::vector<typename G::ValueType> &args) const
         {
             if(this->transductor_)
             {
-                return this->transductor_(args);
+                return std::move(this->transductor_(args));
             }
 
-            return std::monostate();
+            return std::nullopt;
         }
 
         ProductionRule(Terminal<G> const &terminal) : sequence_({ terminal }) {}
@@ -863,7 +866,7 @@ namespace bf
             typename G::ValueType value;
 
             ParseStackItem(lrstate_id_t state) : state(state) {}
-            ParseStackItem(lrstate_id_t state, typename G::ValueType value) : state(state), value(value) {}
+            ParseStackItem(lrstate_id_t state, typename G::ValueType value) : state(state), value(std::move(value)) {}
         };
 
         std::expected<typename G::ValueType, Error> Parse(std::string_view input) override
@@ -886,14 +889,22 @@ namespace bf
                 {
                     case LRActionType::kAccept:
                     {
-                        return parse_stack.top().value;
+                        return std::move(parse_stack.top().value);
                     }
 
                     case LRActionType::kShift:
                     {
-                        auto value = lookahead->terminal.Reason(*lookahead);
+                        auto value = std::move(lookahead->terminal.Reason(*lookahead));
 
-                        parse_stack.emplace(action.state, value);
+                        if(value)
+                        {
+                            parse_stack.emplace(action.state, std::move(*value));
+                        }
+                        else
+                        {
+                            parse_stack.emplace(action.state);
+                        }
+
                         token_stream.Consume();
                         break;
                     }
@@ -906,13 +917,21 @@ namespace bf
                         {
                             auto &top = parse_stack.top();
 
-                            args[i] = top.value;
+                            args[i] = std::move(top.value);
 
                             parse_stack.pop();
                         }
 
-                        auto value = action.rule->Transduce(args);
-                        parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_], value);
+                        auto value = std::move(action.rule->Transduce(args));
+
+                        if(value)
+                        {
+                            parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_], std::move(*value));
+                        }
+                        else
+                        {
+                            parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_]);
+                        }
                         break;
                     }
 

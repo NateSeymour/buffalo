@@ -11,23 +11,23 @@
 using ValueType = std::variant<std::monostate, double, std::string>;
 using G = bf::GrammarDefinition<ValueType>;
 
-spex::CTRETokenizer<G> tok;
+static spex::CTRETokenizer<G> tok;
 
-bf::DefineTerminal<G, double> NUMBER = tok.Terminal<R"(\d+(\.\d+)?)">([](auto const &tok) -> ValueType {
+static bf::DefineTerminal<G, double> NUMBER = tok.Terminal<R"(\d+(\.\d+)?)">([](auto const &tok) -> ValueType {
     return std::stod(std::string(tok.raw));
 });
 
-bf::DefineTerminal<G> OP_EXP = tok.Terminal<R"(\^)", bf::Associativity::Right>();
+static bf::DefineTerminal<G> OP_EXP = tok.Terminal<R"(\^)", bf::Associativity::Right>();
 
-bf::DefineTerminal<G> OP_MUL = tok.Terminal<R"(\*)", bf::Associativity::Left>();
-bf::DefineTerminal<G> OP_DIV = tok.Terminal<R"(\/)", bf::Associativity::Left>();
-bf::DefineTerminal<G> OP_ADD = tok.Terminal<R"(\+)", bf::Associativity::Left>();
-bf::DefineTerminal<G> OP_SUB = tok.Terminal<R"(\-)", bf::Associativity::Left>();
+static bf::DefineTerminal<G> OP_MUL = tok.Terminal<R"(\*)", bf::Associativity::Left>();
+static bf::DefineTerminal<G> OP_DIV = tok.Terminal<R"(\/)", bf::Associativity::Left>();
+static bf::DefineTerminal<G> OP_ADD = tok.Terminal<R"(\+)", bf::Associativity::Left>();
+static bf::DefineTerminal<G> OP_SUB = tok.Terminal<R"(\-)", bf::Associativity::Left>();
 
-bf::DefineTerminal<G> PAR_OPEN = tok.Terminal<R"(\()">();
-bf::DefineTerminal<G> PAR_CLOSE = tok.Terminal<R"(\))">();
+static bf::DefineTerminal<G> PAR_OPEN = tok.Terminal<R"(\()">();
+static bf::DefineTerminal<G> PAR_CLOSE = tok.Terminal<R"(\))">();
 
-bf::DefineNonTerminal<G, double> expression
+static bf::DefineNonTerminal<G, double> expression
     = bf::PR<G>(NUMBER)<=>[](auto &$) -> ValueType { return NUMBER($[0]); }
     | (PAR_OPEN + expression + PAR_CLOSE)<=>[](auto &$) -> ValueType { return expression($[1]); }
     | (expression + OP_EXP + expression)<=>[](auto &$) -> ValueType { return std::pow(expression($[0]), expression($[2])); }
@@ -37,15 +37,15 @@ bf::DefineNonTerminal<G, double> expression
     | (expression + OP_SUB + expression)<=>[](auto &$) -> ValueType { return expression($[0]) - expression($[2]); }
     ;
 
-bf::DefineNonTerminal<G, double> statement
+static bf::DefineNonTerminal<G, double> statement
     = bf::PR<G>(expression)<=>[](auto &$) -> ValueType
     {
         return expression($[0]);
     }
     ;
 
-bf::Grammar grammar(tok, statement);
-bf::SLRParser calculator(grammar);
+static bf::Grammar grammar(tok, statement);
+static bf::SLRParser calculator(grammar);
 
 TEST(Tokenizer, Tokenization)
 {
