@@ -6,7 +6,6 @@
 #include <ctre.hpp>
 #include <map>
 #include <string_view>
-#include <cctype>
 
 namespace spex
 {
@@ -42,7 +41,7 @@ namespace spex
             return std::unexpected(bf::Error());
         }
 
-        template<ctll::fixed_string regex>
+        template<ctll::fixed_string regex, bf::Associativity associativity = bf::Associativity::None>
         bf::Terminal<G> Terminal(bf::Terminal<G>::ReasonerType reasoner = nullptr)
         {
             auto new_terminal = this->Generic(reasoner);
@@ -65,6 +64,8 @@ namespace spex
                     },
                 };
             };
+
+            new_terminal.associativity = associativity;
 
             return new_terminal;
         }

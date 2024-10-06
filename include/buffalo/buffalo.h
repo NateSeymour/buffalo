@@ -66,10 +66,13 @@ namespace bf
     class Terminal;
 
     template<IGrammar G, typename SemanticType>
-    struct DefineTerminal;
+    class DefineTerminal;
 
     template<IGrammar G>
     class NonTerminal;
+
+    template<IGrammar G, typename SemanticType>
+    class DefineNonTerminal;
 
     template<IGrammar G>
     struct LRItem;
@@ -93,6 +96,9 @@ namespace bf
     };
 
     class SemanticConversionError : public Error {};
+    class ShiftShiftError : public Error {};
+    class ShiftReduceError : public Error {};
+    class ReduceReduceError : public Error {};
 
     /**
      * PRODUCTION RULE LIST
@@ -307,6 +313,13 @@ namespace bf
         }
     };
 
+    enum class Associativity
+    {
+        None,
+        Left,
+        Right,
+    };
+
     /**
      * TERMINAL
      */
@@ -325,6 +338,9 @@ namespace bf
         Terminal(ReasonerType reasoner = nullptr) : reasoner_(reasoner) {}
 
     public:
+        std::size_t precedence = this->id;
+        Associativity associativity = Associativity::None;
+
         typename G::ValueType Reason(Token<G> const &token) const
         {
             if(this->reasoner_)
@@ -341,15 +357,9 @@ namespace bf
      * @tparam G
      */
     template<IGrammar G, typename SemanticValue = void>
-    class DefineTerminal
+    class DefineTerminal : public Terminal<G>
     {
-        Terminal<G> terminal_;
-
     public:
-        operator Terminal<G> () { return  this->terminal_; }
-        operator Terminal<G>&() { return  this->terminal_; }
-        operator Terminal<G>*() { return &this->terminal_; }
-
         SemanticValue operator()(typename G::ValueType value)
         {
             if(!std::holds_alternative<SemanticValue>(value))
@@ -360,8 +370,10 @@ namespace bf
             return std::get<SemanticValue>(value);
         }
 
-        DefineTerminal(Terminal<G> &&terminal) : terminal_(terminal) {}
-        DefineTerminal(Terminal<G>  &terminal) : terminal_(terminal) {}
+        DefineTerminal() = delete;
+
+        DefineTerminal(Terminal<G> &&terminal) : Terminal<G>(terminal) {}
+        DefineTerminal(Terminal<G>  &terminal) : Terminal<G>(terminal) {}
     };
 
     /**
@@ -390,15 +402,9 @@ namespace bf
      * DEFINE NON-TERMINAL
      */
     template<IGrammar G, typename SemanticValue = void>
-    class DefineNonTerminal
+    class DefineNonTerminal : public NonTerminal<G>
     {
-        NonTerminal<G> nonterminal_;
-
     public:
-        operator NonTerminal<G> () { return  this->nonterminal_; }
-        operator NonTerminal<G>&() { return  this->nonterminal_; }
-        operator NonTerminal<G>*() { return &this->nonterminal_; }
-
         SemanticValue operator()(typename G::ValueType value)
         {
             if(!std::holds_alternative<SemanticValue>(value))
@@ -409,10 +415,10 @@ namespace bf
             return std::get<SemanticValue>(value);
         }
 
-        DefineNonTerminal(NonTerminal<G> &&nonterminal) : nonterminal_(nonterminal) {}
-        DefineNonTerminal(NonTerminal<G>  &nonterminal) : nonterminal_(nonterminal) {}
-        DefineNonTerminal(ProductionRule<G> const &rule) : nonterminal_(rule) {}
-        DefineNonTerminal(ProductionRuleList<G> const &rule_list) : nonterminal_(rule_list) {}
+        DefineNonTerminal() = delete;
+
+        DefineNonTerminal(ProductionRule<G> const &rule) : NonTerminal<G>(rule) {}
+        DefineNonTerminal(ProductionRuleList<G> const &rule_list) : NonTerminal<G>(rule_list) {}
     };
 
     /**
@@ -435,6 +441,7 @@ namespace bf
     protected:
         typename G::TransductorType transductor_ = nullptr;
         std::vector<Symbol<G>> sequence_;
+        std::size_t precedence = -1;
 
         NonTerminal<G> *non_terminal_ = nullptr;
 
@@ -610,13 +617,17 @@ namespace bf
             for(auto &rule : nonterminal->rules_)
             {
                 rule.non_terminal_ = nonterminal;
+                Symbol<G> *last_terminal = nullptr;
 
                 this->production_rules_.push_back({nonterminal, rule});
 
                 for(auto &symbol : rule.sequence_)
                 {
                     std::visit(overload{
-                        [](Terminal<G> terminal) { /* Do Nothing */ },
+                        [&](Terminal<G> terminal)
+                        {
+                            last_terminal = &symbol;
+                        },
                         [&](NonTerminal<G> *child_nonterminal)
                         {
                             if(this->registered_nonterminals_.contains(child_nonterminal)) return;
@@ -624,6 +635,12 @@ namespace bf
                             this->RegisterNonTerminals(child_nonterminal);
                         }
                     }, symbol);
+                }
+
+                // Rule precedence defaults to the precedence of the LAST terminal in sequence.
+                if(last_terminal)
+                {
+                    rule.precedence = std::get<Terminal<G>>(*last_terminal).precedence;
                 }
             }
         }
@@ -640,28 +657,28 @@ namespace bf
     /*
      * PRODUCTION RULE COMPOSITION FUNCTIONS
      */
-    template<IGrammar G, typename LhsType, typename RhsType>
-    ProductionRule<G> operator+(DefineTerminal<G, LhsType> &lhs, DefineTerminal<G, RhsType> &rhs)
+    template<IGrammar G>
+    ProductionRule<G> operator+(Terminal<G> &lhs, Terminal<G> &rhs)
     {
-        return ProductionRule((Terminal<G>&)lhs) + (Terminal<G>&)rhs;
+        return ProductionRule(lhs) + rhs;
     }
 
-    template<IGrammar G, typename LhsType, typename RhsType>
-    ProductionRule<G> operator+(DefineTerminal<G, LhsType> &lhs, DefineNonTerminal<G, RhsType> &rhs)
+    template<IGrammar G>
+    ProductionRule<G> operator+(Terminal<G> &lhs, NonTerminal<G> &rhs)
     {
-        return ProductionRule((Terminal<G>&)lhs) + (NonTerminal<G>&)rhs;
+        return ProductionRule(lhs) + rhs;
     }
 
-    template<IGrammar G, typename LhsType, typename RhsType>
-    ProductionRule<G> operator+(DefineNonTerminal<G, LhsType> &lhs, DefineNonTerminal<G, RhsType> &rhs)
+    template<IGrammar G>
+    ProductionRule<G> operator+(NonTerminal<G> &lhs, NonTerminal<G> &rhs)
     {
-        return ProductionRule((NonTerminal<G>&)lhs) + (NonTerminal<G>&)rhs;
+        return ProductionRule(lhs) + rhs;
     }
 
-    template<IGrammar G, typename LhsType, typename RhsType>
-    ProductionRule<G> operator+(DefineNonTerminal<G, LhsType> &lhs, DefineTerminal<G, RhsType> &rhs)
+    template<IGrammar G>
+    ProductionRule<G> operator+(NonTerminal<G> &lhs, Terminal<G> &rhs)
     {
-        return ProductionRule((NonTerminal<G>&)lhs) + (Terminal<G>&)rhs;
+        return ProductionRule(lhs) + rhs;
     }
 
     template<IGrammar G>
@@ -788,21 +805,6 @@ namespace bf
     };
 
     /**
-     * LR STATE HASHER
-     * Helper class to hash LRState<G> for storage in std::unordered_map
-     * @tparam G
-     */
-    template<IGrammar G>
-    struct LRStateHasher
-    {
-        std::size_t operator()(LRState<G> const &state) const noexcept
-        {
-            // TODO: Perform an actual hash operation on the state!
-            return 0;
-        }
-    };
-
-    /**
      * LR ACTION TYPE
      */
     enum class LRActionType
@@ -851,8 +853,8 @@ namespace bf
     {
         Grammar<G> &grammar_;
 
-        std::map<lrstate_id_t, std::map<Terminal<G>, LRAction<G>>> new_action_;
-        std::map<lrstate_id_t, std::map<NonTerminal<G> *, lrstate_id_t>> new_goto_;
+        std::map<lrstate_id_t, std::map<Terminal<G>, LRAction<G>>> action_;
+        std::map<lrstate_id_t, std::map<NonTerminal<G> *, lrstate_id_t>> goto_;
 
     public:
         struct ParseStackItem
@@ -879,7 +881,7 @@ namespace bf
                     return std::unexpected(Error());
                 }
 
-                LRAction<G> action = this->new_action_[parse_stack.top().state][lookahead->terminal];
+                LRAction<G> action = this->action_[parse_stack.top().state][lookahead->terminal];
                 switch(action.type)
                 {
                     case LRActionType::kAccept:
@@ -910,7 +912,7 @@ namespace bf
                         }
 
                         auto value = action.rule->Transduce(args);
-                        parse_stack.emplace(this->new_goto_[parse_stack.top().state][action.rule->non_terminal_], value);
+                        parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_], value);
                         break;
                     }
 
@@ -970,7 +972,22 @@ namespace bf
                         // Create ACTION
                         [&](Terminal<G> terminal)
                         {
-                            this->new_action_[i][terminal] = {
+                            switch(this->action_[i][terminal].type)
+                            {
+                                case LRActionType::kShift:
+                                {
+                                    throw ShiftShiftError();
+                                }
+
+                                case LRActionType::kReduce:
+                                {
+                                    throw ShiftReduceError();
+                                }
+
+                                default:;
+                            }
+
+                            this->action_[i][terminal] = {
                                 .type = LRActionType::kShift,
                                 .state = new_state_id,
                             };
@@ -979,7 +996,7 @@ namespace bf
                         // Create GOTO
                         [&](NonTerminal<G> *non_terminal)
                         {
-                            this->new_goto_[i][non_terminal] = new_state_id;
+                            this->goto_[i][non_terminal] = new_state_id;
                         },
                     }, symbol);
                 }
@@ -991,10 +1008,60 @@ namespace bf
                     {
                         for(auto follow_terminal : this->grammar_.follow_[item.rule->non_terminal_])
                         {
-                            this->new_action_[i][follow_terminal] = {
-                                .type = *item.rule->non_terminal_ == this->grammar_.root ? LRActionType::kAccept : LRActionType::kReduce,
-                                .rule = item.rule,
-                            };
+                            switch(this->action_[i][follow_terminal].type)
+                            {
+                                /* SHIFT-REDUCE CONFLICT */
+                                case LRActionType::kShift:
+                                {
+                                    // Reduce due to higher precedence
+                                    if(item.rule->precedence < follow_terminal.precedence)
+                                    {
+                                        this->action_[i][follow_terminal] = {
+                                            .type = *item.rule->non_terminal_ == this->grammar_.root ? LRActionType::kAccept : LRActionType::kReduce,
+                                            .rule = item.rule,
+                                        };
+                                        break;
+                                    }
+
+                                    // Shift due to lower precedence
+                                    if(item.rule->precedence > follow_terminal.precedence)
+                                    {
+                                        break;
+                                    }
+
+                                    // Reduce due to associativity rule
+                                    if(follow_terminal.associativity == Associativity::Left)
+                                    {
+                                        this->action_[i][follow_terminal] = {
+                                            .type = *item.rule->non_terminal_ == this->grammar_.root ? LRActionType::kAccept : LRActionType::kReduce,
+                                            .rule = item.rule,
+                                        };
+                                        break;
+                                    }
+
+                                    // Shift due to associativity rule
+                                    if(follow_terminal.associativity == Associativity::Right)
+                                    {
+                                        break;
+                                    }
+
+                                    // Unable to resolve conflict
+                                    throw ShiftReduceError();
+                                }
+
+                                case LRActionType::kReduce:
+                                {
+                                    throw ReduceReduceError();
+                                }
+
+                                default:
+                                {
+                                    this->action_[i][follow_terminal] = {
+                                        .type = *item.rule->non_terminal_ == this->grammar_.root ? LRActionType::kAccept : LRActionType::kReduce,
+                                        .rule = item.rule,
+                                    };
+                                }
+                            }
                         }
                     }
                 }
