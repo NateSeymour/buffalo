@@ -358,11 +358,16 @@ namespace bf
     class DefineTerminal : public Terminal<G>
     {
     public:
-        SemanticValue operator()(typename G::ValueType value)
+        SemanticValue operator()(typename G::ValueType &value)
         {
             if constexpr(std::variant_size<typename G::ValueType>::value != 0)
             {
-                return std::get<SemanticValue>(value);
+                if(!std::holds_alternative<SemanticValue>(value))
+                {
+                    throw SemanticConversionError();
+                }
+
+                return std::move(std::get<SemanticValue>(value));
             }
             else
             {
@@ -408,14 +413,21 @@ namespace bf
     class DefineNonTerminal : public NonTerminal<G>
     {
     public:
-        SemanticValue operator()(typename G::ValueType value)
+        SemanticValue operator()(typename G::ValueType &value)
         {
-            if(!std::holds_alternative<SemanticValue>(value))
+            if constexpr(std::variant_size<typename G::ValueType>::value != 0)
             {
-                throw SemanticConversionError();
-            }
+                if(!std::holds_alternative<SemanticValue>(value))
+                {
+                    throw SemanticConversionError();
+                }
 
-            return std::get<SemanticValue>(value);
+                return std::move(std::get<SemanticValue>(value));
+            }
+            else
+            {
+                return std::move(reinterpret_cast<SemanticValue>(value));
+            }
         }
 
         DefineNonTerminal() = delete;
