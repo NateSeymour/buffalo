@@ -1,7 +1,7 @@
 # buffalo
 > *buffalo: to bewilder, baffle (also: **bamboozle**)* [2024 Merriam-Webster Dictionary]
 
-Bewilder, baffle (even bamboozle!) your coworkers with `buffalo`, a pure C++23 header-only SLR parser generator with 
+Bewilder, baffle (even bamboozle!) your grammars with `buffalo`, a C++23 header-only SLR parser generator with 
  `yacc/bison`-like syntax.
 
 It supports the definition of terminals, non-terminals and grammar structures all within the same C++ file.
