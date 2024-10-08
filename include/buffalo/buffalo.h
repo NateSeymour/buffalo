@@ -484,6 +484,15 @@ namespace bf
 
         bool operator==(ProductionRule<G> const &other) const
         {
+            if(this->non_terminal_ && other.non_terminal_)
+            {
+                if(*this->non_terminal_ != *other.non_terminal_) return false;
+            }
+            else if(this->non_terminal_ != other.non_terminal_)
+            {
+                return false;
+            }
+
             if(this->sequence_.size() != other.sequence_.size()) return false;
 
             for(auto const &[first, second] : std::views::zip(this->sequence_, other.sequence_))
