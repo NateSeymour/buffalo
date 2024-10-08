@@ -1057,7 +1057,7 @@ namespace bf
                                     if(item.rule->precedence < follow_terminal.precedence)
                                     {
                                         this->action_[i][follow_terminal] = {
-                                            .type = *item.rule->non_terminal_ == this->grammar_.root ? LRActionType::kAccept : LRActionType::kReduce,
+                                            .type = LRActionType::kReduce,
                                             .rule = item.rule,
                                         };
                                         break;
@@ -1073,7 +1073,7 @@ namespace bf
                                     if(follow_terminal.associativity == Associativity::Left)
                                     {
                                         this->action_[i][follow_terminal] = {
-                                            .type = *item.rule->non_terminal_ == this->grammar_.root ? LRActionType::kAccept : LRActionType::kReduce,
+                                            .type = LRActionType::kReduce,
                                             .rule = item.rule,
                                         };
                                         break;
@@ -1097,7 +1097,7 @@ namespace bf
                                 default:
                                 {
                                     this->action_[i][follow_terminal] = {
-                                        .type = *item.rule->non_terminal_ == this->grammar_.root ? LRActionType::kAccept : LRActionType::kReduce,
+                                        .type = LRActionType::kReduce,
                                         .rule = item.rule,
                                     };
                                 }
@@ -1106,6 +1106,10 @@ namespace bf
                     }
                 }
             }
+
+            this->action_[0][this->grammar_.tokenizer.EOS] = {
+                .type = LRActionType::kAccept,
+            };
         }
 
         SLRParser(Grammar<G> &grammar) : grammar_(grammar)
