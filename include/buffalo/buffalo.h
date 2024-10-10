@@ -1,16 +1,16 @@
 #ifndef BUFFALO2_H
 #define BUFFALO2_H
 
-#include <functional>
-#include <variant>
+#include <exception>
 #include <expected>
-#include <vector>
+#include <functional>
 #include <map>
+#include <ranges>
 #include <set>
 #include <stack>
-#include <ranges>
 #include <type_traits>
-#include <exception>
+#include <variant>
+#include <vector>
 
 namespace bf
 {

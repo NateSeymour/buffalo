@@ -11,6 +11,12 @@ It supports the definition of terminals, non-terminals and grammar structures al
 - Grammar definition in pseudo BNF notation.
 - Shift/Reduce conflict resolution through precedence (based on definition order) and associativity (left/right/none). 
 
+## Compiler Support
+`buffalo` officially supports the following compilers:
+- GCC 14
+- Clang 18
+- MSVC 
+
 ## Examples
 ### Calculator
 ```c++
