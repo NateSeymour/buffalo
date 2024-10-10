@@ -35,6 +35,8 @@ jobs:
       - name: Install MinGW
         if: matrix.os == 'windows-latest'
         uses: egor-tensin/setup-mingw@v2.2.0
+        with:
+          static: 0
 
       - name: Update Linux Packages
         if: matrix.os == 'ubuntu-24.04'
