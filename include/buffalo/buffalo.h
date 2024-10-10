@@ -5,6 +5,7 @@
 #include <expected>
 #include <functional>
 #include <map>
+#include <optional>
 #include <ranges>
 #include <set>
 #include <stack>
