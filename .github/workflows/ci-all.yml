@@ -9,11 +9,11 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest]
         build_type: [Release]
-        c_compiler: [gcc-14, clang-18]
+        c_compiler: [gcc-14, clang-18, cl]
         include:
           - os: windows-latest
-            c_compiler: gcc-14
-            cpp_compiler: gcc++-14
+            c_compiler: cl
+            cpp_compiler: cl
             compiler_flags:
             linker_flags:
           - os: ubuntu-24.04
@@ -27,8 +27,12 @@ jobs:
             compiler_flags: -stdlib=libc++
             linker_flags: -stdlib=libc++ -lc++abi
         exclude:
+          - os: ubuntu-24.04
+            c_compiler: cl
           - os: windows-latest
             c_compiler: clang-18
+          - os: windows-latest
+            c_compiler: gcc-14
     steps:
       - uses: actions/checkout@v4
 
