@@ -7,7 +7,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
         build_type: [Release]
         c_compiler: [gcc, clang, cl]
         include:
@@ -36,7 +36,7 @@ jobs:
 
       - name: Install Latest GCC
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt install gcc-14 g++-14
+        run: sudo apt install build-essential gcc-14 g++-14
 
       - name: Configure CMake
         run: >
