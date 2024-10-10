@@ -32,12 +32,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install MinGW
-        if: matrix.os == 'windows-latest'
-        uses: egor-tensin/setup-mingw@v2.2.0
-        with:
-          static: 0
-
       - name: Install Latest Compilers
         if: matrix.os == 'ubuntu-24.04'
         run: sudo apt install build-essential gcc-14 g++-14 clang-18 libc++-18-dev libc++abi-18-dev
@@ -56,6 +50,12 @@ jobs:
         # Build your program with the given configuration. Note that --config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
         run: cmake --build "${{ github.workspace }}/build" --config ${{ matrix.build_type }}
 
-      - name: Test
+      - name: Test On Linux
+        if: matrix.os == 'ubuntu-24.04'
         working-directory: "${{ github.workspace }}/build"
         run: ./buffalo-test
+
+      - name: Test On Windows
+        if: matrix.os == 'windows-latest'
+        working-directory: "${{ github.workspace }}/build"
+        run: ./buffalo-test.exe
