@@ -30,6 +30,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Update Linux Packagse
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt update && sudo apt upgrade
+
       - name: Install Latest GCC
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt install gcc-14 g++-14
