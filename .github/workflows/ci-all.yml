@@ -62,4 +62,4 @@ jobs:
       - name: Test On Windows
         if: matrix.os == 'windows-latest'
         working-directory: "${{ github.workspace }}/build"
-        run: ./buffalo-test.exe
+        run: .\Release\buffalo-test.exe
