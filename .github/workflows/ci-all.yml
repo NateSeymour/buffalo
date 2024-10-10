@@ -32,9 +32,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Latest Compilers
-        if: matrix.os == 'ubuntu-24.04'
-        run: sudo apt install build-essential gcc-14 g++-14 clang-18 libc++-18-dev libc++abi-18-dev
+      - name: Install Latest GCC
+        if: matrix.os == 'ubuntu-24.04' && matrix.c_compiler == 'gcc-14'
+        run: sudo apt install build-essential gcc-14 g++-14
+
+      - name: Install Latest CLANG
+        if: matrix.os == 'ubuntu-24.04' && matrix.c_compiler == 'clang-18'
+        run: sudo apt install build-essential clang-18 libc++-18-dev libc++abi-18-dev
 
       - name: Configure CMake
         run: >
