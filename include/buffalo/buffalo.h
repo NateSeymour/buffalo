@@ -8,7 +8,7 @@
 #include <ranges>
 #include <set>
 #include <stack>
-#include <type_traits>
+#include <stdexcept>
 #include <variant>
 #include <vector>
 
