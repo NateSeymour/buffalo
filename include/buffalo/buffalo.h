@@ -108,9 +108,7 @@ namespace bf
             return this->error_message.c_str();
         }
 
-        SemanticConversionError(Symbol<G> symbol)
-        {
-        }
+        SemanticConversionError() {}
     };
 
     class ShiftShiftError : public Error {};
@@ -397,7 +395,7 @@ namespace bf
             {
                 if(!std::holds_alternative<SemanticValue>(value))
                 {
-                    throw SemanticConversionError();
+                    throw SemanticConversionError<G, SemanticValue>();
                 }
 
                 return std::move(std::get<SemanticValue>(value));
@@ -452,7 +450,7 @@ namespace bf
             {
                 if(!std::holds_alternative<SemanticValue>(value))
                 {
-                    throw SemanticConversionError();
+                    throw SemanticConversionError<G, SemanticValue>();
                 }
 
                 return std::move(std::get<SemanticValue>(value));
