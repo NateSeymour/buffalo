@@ -877,12 +877,11 @@ namespace bf
     template<IGrammar G>
     class SLRParser final : public Parser<G>
     {
-        Grammar<G> &grammar_;
+        Grammar<G> grammar_;
 
         std::map<lrstate_id_t, std::map<Terminal<G>, LRAction<G>>> action_;
         std::map<lrstate_id_t, std::map<NonTerminal<G> *, lrstate_id_t>> goto_;
 
-    public:
         struct ParseStackItem
         {
             lrstate_id_t state;
@@ -891,80 +890,6 @@ namespace bf
             ParseStackItem(lrstate_id_t state) : state(state) {}
             ParseStackItem(lrstate_id_t state, typename G::ValueType value) : state(state), value(std::move(value)) {}
         };
-
-        std::expected<typename G::ValueType, Error> Parse(std::string_view input) override
-        {
-            auto token_stream = this->grammar_.tokenizer.StreamInput(input);
-
-            std::stack<ParseStackItem> parse_stack;
-            parse_stack.emplace(0);
-
-            while(true)
-            {
-                std::optional<Token<G>> lookahead = token_stream.Peek();
-                if(!lookahead)
-                {
-                    return std::unexpected(Error());
-                }
-
-                LRAction<G> action = this->action_[parse_stack.top().state][lookahead->terminal];
-                switch(action.type)
-                {
-                    case LRActionType::kAccept:
-                    {
-                        return std::move(parse_stack.top().value);
-                    }
-
-                    case LRActionType::kShift:
-                    {
-                        auto value = std::move(lookahead->terminal.Reason(*lookahead));
-
-                        if(value)
-                        {
-                            parse_stack.emplace(action.state, std::move(*value));
-                        }
-                        else
-                        {
-                            parse_stack.emplace(action.state);
-                        }
-
-                        token_stream.Consume();
-                        break;
-                    }
-
-                    case LRActionType::kReduce:
-                    {
-                        std::vector<typename G::ValueType> args(action.rule->sequence_.size());
-
-                        for(int i = action.rule->sequence_.size() - 1; i >= 0; i--)
-                        {
-                            auto &top = parse_stack.top();
-
-                            args[i] = std::move(top.value);
-
-                            parse_stack.pop();
-                        }
-
-                        auto value = std::move(action.rule->Transduce(args));
-
-                        if(value)
-                        {
-                            parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_], std::move(*value));
-                        }
-                        else
-                        {
-                            parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_]);
-                        }
-                        break;
-                    }
-
-                    default:
-                    {
-                        return std::unexpected(Error());
-                    }
-                }
-            }
-        }
 
         /**
          * Inserts state into list if does not exist, otherwise returns the index of existing equal state.
@@ -990,7 +915,7 @@ namespace bf
         /**
          * Constructs ACTION and GOTO for table-based SLR parsing.
          */
-        void BuildParsingTables()
+        std::optional<Error> BuildParsingTables()
         {
             std::vector<LRState<G>> states;
 
@@ -1112,12 +1037,111 @@ namespace bf
             this->action_[0][this->grammar_.tokenizer.EOS] = {
                 .type = LRActionType::kAccept,
             };
+
+            return std::nullopt;
         }
 
-        SLRParser(Grammar<G> &grammar) : grammar_(grammar)
+    protected:
+        /**
+         * Simply constructs the SLRParser's grammar and empty tables. SLRParser<G>::BuildParsingTables
+         * MUST be called before attempting to parse.
+         * @param tokenizer
+         * @param start
+         */
+        SLRParser(Tokenizer<G> const &tokenizer, NonTerminal<G> &start) : grammar_(tokenizer, start) {}
+
+    public:
+        std::expected<typename G::ValueType, Error> Parse(std::string_view input) override
         {
-            this->BuildParsingTables();
+            auto token_stream = this->grammar_.tokenizer.StreamInput(input);
+
+            std::stack<ParseStackItem> parse_stack;
+            parse_stack.emplace(0);
+
+            while(true)
+            {
+                std::optional<Token<G>> lookahead = token_stream.Peek();
+                if(!lookahead)
+                {
+                    return std::unexpected(Error());
+                }
+
+                LRAction<G> action = this->action_[parse_stack.top().state][lookahead->terminal];
+                switch(action.type)
+                {
+                    case LRActionType::kAccept:
+                    {
+                        return std::move(parse_stack.top().value);
+                    }
+
+                    case LRActionType::kShift:
+                    {
+                        auto value = std::move(lookahead->terminal.Reason(*lookahead));
+
+                        if(value)
+                        {
+                            parse_stack.emplace(action.state, std::move(*value));
+                        }
+                        else
+                        {
+                            parse_stack.emplace(action.state);
+                        }
+
+                        token_stream.Consume();
+                        break;
+                    }
+
+                    case LRActionType::kReduce:
+                    {
+                        std::vector<typename G::ValueType> args(action.rule->sequence_.size());
+
+                        for(int i = action.rule->sequence_.size() - 1; i >= 0; i--)
+                        {
+                            auto &top = parse_stack.top();
+
+                            args[i] = std::move(top.value);
+
+                            parse_stack.pop();
+                        }
+
+                        auto value = std::move(action.rule->Transduce(args));
+
+                        if(value)
+                        {
+                            parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_], std::move(*value));
+                        }
+                        else
+                        {
+                            parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_]);
+                        }
+                        break;
+                    }
+
+                    default:
+                    {
+                        return std::unexpected(Error());
+                    }
+                }
+            }
         }
+
+        static std::expected<SLRParser, Error> Build(Tokenizer<G> const &tokenizer, NonTerminal<G> &start)
+        {
+            SLRParser parser(tokenizer, start);
+
+            auto error = parser.BuildParsingTables();
+            if(error)
+            {
+                return std::unexpected(*error);
+            }
+
+            return std::move(parser);
+        }
+
+        /**
+         * Construction of a parser can generate grammar errors. Use SLRParser<G>::Build to create.
+         */
+        SLRParser() = delete;
     };
 }
 
