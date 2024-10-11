@@ -4,6 +4,7 @@
 #include <cctype>
 #include <exception>
 #include <expected>
+#include <format>
 #include <functional>
 #include <map>
 #include <optional>
@@ -93,10 +94,25 @@ namespace bf
     class Error : public std::runtime_error
     {
     public:
-        Error() : runtime_error("Generic Error") {}
+        Error() : runtime_error("Buffalo Generic Error") {}
     };
 
-    class SemanticConversionError : public Error {};
+    template<IGrammar G, typename SemanticType>
+    class SemanticConversionError : public Error
+    {
+        std::string error_message = "";
+
+    public:
+        char const *what() const noexcept override
+        {
+            return this->error_message.c_str();
+        }
+
+        SemanticConversionError(Symbol<G> symbol)
+        {
+        }
+    };
+
     class ShiftShiftError : public Error {};
     class ShiftReduceError : public Error {};
     class ReduceReduceError : public Error {};
@@ -321,10 +337,18 @@ namespace bf
     };
 
     /**
+     * Struct to hold debug symbol names.
+     */
+    struct DebugSymbol
+    {
+        char const *debug_name = "Generic Symbol";
+    };
+
+    /**
      * TERMINAL
      */
     template<IGrammar G>
-    class Terminal : public StaticallyIdentifiedObject
+    class Terminal : public StaticallyIdentifiedObject, public DebugSymbol
     {
         friend class Grammar<G>;
         friend class Tokenizer<G>;
@@ -340,6 +364,13 @@ namespace bf
     public:
         std::size_t precedence = this->id;
         Associativity associativity = Associativity::None;
+
+        Terminal &operator|(Associativity new_associativity)
+        {
+            this->associativity = new_associativity;
+
+            return *this;
+        }
 
         std::optional<typename G::ValueType> Reason(Token<G> const &token) const
         {
@@ -379,8 +410,8 @@ namespace bf
 
         DefineTerminal() = delete;
 
-        DefineTerminal(Terminal<G> &&terminal) : Terminal<G>(terminal) {}
         DefineTerminal(Terminal<G>  &terminal) : Terminal<G>(terminal) {}
+        DefineTerminal(Terminal<G> &&terminal) : Terminal<G>(terminal) {}
     };
 
     /**

@@ -17,12 +17,12 @@ bf::DefineTerminal<G, double> NUMBER = tok.Terminal<R"(\d+(\.\d+)?)">([](auto co
     return std::stod(std::string(tok.raw));
 });
 
-bf::DefineTerminal<G> OP_EXP = tok.Terminal<R"(\^)", bf::Associativity::Right>();
+bf::DefineTerminal<G> OP_EXP = tok.Terminal<R"(\^)">() | bf::Associativity::Right;
 
-bf::DefineTerminal<G> OP_MUL = tok.Terminal<R"(\*)", bf::Associativity::Left>();
-bf::DefineTerminal<G> OP_DIV = tok.Terminal<R"(\/)", bf::Associativity::Left>();
-bf::DefineTerminal<G> OP_ADD = tok.Terminal<R"(\+)", bf::Associativity::Left>();
-bf::DefineTerminal<G> OP_SUB = tok.Terminal<R"(\-)", bf::Associativity::Left>();
+bf::DefineTerminal<G> OP_MUL = tok.Terminal<R"(\*)">() | bf::Associativity::Left;
+bf::DefineTerminal<G> OP_DIV = tok.Terminal<R"(\/)">() | bf::Associativity::Left;
+bf::DefineTerminal<G> OP_ADD = tok.Terminal<R"(\+)">() | bf::Associativity::Left;
+bf::DefineTerminal<G> OP_SUB = tok.Terminal<R"(\-)">() | bf::Associativity::Left;
 
 bf::DefineTerminal<G> PAR_OPEN = tok.Terminal<R"(\()">();
 bf::DefineTerminal<G> PAR_CLOSE = tok.Terminal<R"(\))">();
