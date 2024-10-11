@@ -29,11 +29,7 @@ target_link_libraries(buffalo INTERFACE ctre::ctre)
 
 # Tests
 add_executable(buffalo-test
-        test/basic.test.cpp
-        test/tokenizer.test.cpp
-        test/grammar.test.cpp
-        test/smartptr.test.cpp
+        test/buffalo.test.cpp
 )
-
 target_link_libraries(buffalo-test PRIVATE buffalo GTest::gtest_main)
 target_include_directories(buffalo-test PRIVATE include)
