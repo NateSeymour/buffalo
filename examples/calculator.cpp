@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cmath>
 #include <buffalo/buffalo.h>
 #include <buffalo/spex.h>
 
