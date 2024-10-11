@@ -94,26 +94,57 @@ namespace bf
     class Error : public std::runtime_error
     {
     public:
-        Error() : runtime_error("Buffalo Generic Error") {}
+        Error(char const *error = "Buffalo Generic Error") : runtime_error(error) {}
+    };
+
+    class UnexpectedInputError : public Error
+    {
+    public:
+        UnexpectedInputError() : Error("Unexpected Input") {}
     };
 
     template<IGrammar G, typename SemanticType>
     class SemanticConversionError : public Error
     {
-        std::string error_message = "";
+        std::string message_ = "";
 
     public:
         char const *what() const noexcept override
         {
-            return this->error_message.c_str();
+            return this->message_.c_str();
         }
 
-        SemanticConversionError() {}
+        SemanticConversionError()
+        {
+
+        }
     };
 
     class ShiftShiftError : public Error {};
     class ShiftReduceError : public Error {};
     class ReduceReduceError : public Error {};
+
+    class UserError : public Error
+    {
+        std::string message_ = "";
+    public:
+        char const *what() const noexcept override
+        {
+            return this->message_.c_str();
+        }
+
+        UserError(std::exception const &exception)
+        {
+            this->message_.append("Buffalo UserError caused by following exception:\n");
+            this->message_.append(exception.what());
+        }
+    };
+
+    class UnexpectedTokenError : public Error
+    {
+    public:
+        UnexpectedTokenError() : Error("The parser encountered an unexpected token during parsing!") {}
+    };
 
     /**
      * PRODUCTION RULE LIST
@@ -204,7 +235,7 @@ namespace bf
             std::deque<Token<G>> buffer_;
 
         public:
-            std::optional<Token<G>> Peek(std::size_t lookahead = 1)
+            std::expected<Token<G>, Error> Peek(std::size_t lookahead = 1)
             {
                 // Fill buffer to requested lookahead
                 for(int i = 0; i < lookahead - buffer_.size(); i++)
@@ -218,7 +249,7 @@ namespace bf
                     auto token = this->tokenizer_.First(this->input_);
                     if(!token)
                     {
-                        return std::nullopt;
+                        return token;
                     }
 
                     token->location.begin += this->index_;
@@ -235,11 +266,9 @@ namespace bf
                 {
                     return this->buffer_[lookahead - 1];
                 }
-
-                return std::nullopt;
             }
 
-            std::optional<Token<G>> Consume()
+            std::expected<Token<G>, Error> Consume()
             {
                 auto token = this->Peek(1);
                 if(token)
@@ -968,21 +997,6 @@ namespace bf
                         // Create ACTION
                         [&](Terminal<G> terminal)
                         {
-                            switch(this->action_[i][terminal].type)
-                            {
-                                case LRActionType::kShift:
-                                {
-                                    throw ShiftShiftError();
-                                }
-
-                                case LRActionType::kReduce:
-                                {
-                                    throw ShiftReduceError();
-                                }
-
-                                default:;
-                            }
-
                             this->action_[i][terminal] = {
                                 .type = LRActionType::kShift,
                                 .state = new_state_id,
@@ -1042,12 +1056,12 @@ namespace bf
                                     }
 
                                     // Unable to resolve conflict
-                                    throw ShiftReduceError();
+                                    return ShiftReduceError();
                                 }
 
                                 case LRActionType::kReduce:
                                 {
-                                    throw ReduceReduceError();
+                                    return ReduceReduceError();
                                 }
 
                                 default:
@@ -1089,10 +1103,10 @@ namespace bf
 
             while(true)
             {
-                std::optional<Token<G>> lookahead = token_stream.Peek();
+                std::expected<Token<G>, Error> lookahead = token_stream.Peek();
                 if(!lookahead)
                 {
-                    return std::unexpected(Error());
+                    return std::unexpected(lookahead.error());
                 }
 
                 LRAction<G> action = this->action_[parse_stack.top().state][lookahead->terminal];
@@ -1105,7 +1119,15 @@ namespace bf
 
                     case LRActionType::kShift:
                     {
-                        auto value = std::move(lookahead->terminal.Reason(*lookahead));
+                        std::optional<typename G::ValueType> value;
+                        try
+                        {
+                            value = std::move(lookahead->terminal.Reason(*lookahead));
+                        }
+                        catch(std::exception &e)
+                        {
+                            return std::unexpected(UserError(e));
+                        }
 
                         if(value)
                         {
@@ -1133,7 +1155,15 @@ namespace bf
                             parse_stack.pop();
                         }
 
-                        auto value = std::move(action.rule->Transduce(args));
+                        std::optional<typename G::ValueType> value;
+                        try
+                        {
+                            value = std::move(action.rule->Transduce(args));
+                        }
+                        catch(std::exception &e)
+                        {
+                            return std::unexpected(UserError(e));
+                        }
 
                         if(value)
                         {
@@ -1148,7 +1178,7 @@ namespace bf
 
                     default:
                     {
-                        return std::unexpected(Error());
+                        return std::unexpected(UnexpectedTokenError());
                     }
                 }
             }
