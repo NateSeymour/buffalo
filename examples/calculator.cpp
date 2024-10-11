@@ -6,30 +6,29 @@
  * Grammar Definition
  */
 using G = bf::GrammarDefinition<double>;
-
 spex::CTRETokenizer<G> tok;
 
 /*
  * Terminals
  */
-bf::DefineTerminal<G, double> NUMBER = tok.Terminal<R"(\d+(\.\d+)?)">([](auto const &tok) {
+bf::DefineTerminal NUMBER = tok.Terminal<R"(\d+(\.\d+)?)">([](auto const &tok) {
     return std::stod(std::string(tok.raw));
 });
 
-bf::DefineTerminal<G> OP_EXP = tok.Terminal<R"(\^)">() | bf::Associativity::Right;
+bf::DefineTerminal OP_EXP = tok.Terminal<R"(\^)">() | bf::Associativity::Right;
 
-bf::DefineTerminal<G> OP_MUL = tok.Terminal<R"(\*)">() | bf::Associativity::Left;
-bf::DefineTerminal<G> OP_DIV = tok.Terminal<R"(\/)">() | bf::Associativity::Left;
-bf::DefineTerminal<G> OP_ADD = tok.Terminal<R"(\+)">() | bf::Associativity::Left;
-bf::DefineTerminal<G> OP_SUB = tok.Terminal<R"(\-)">() | bf::Associativity::Left;
+bf::DefineTerminal OP_MUL = tok.Terminal<R"(\*)">() | bf::Associativity::Left;
+bf::DefineTerminal OP_DIV = tok.Terminal<R"(\/)">() | bf::Associativity::Left;
+bf::DefineTerminal OP_ADD = tok.Terminal<R"(\+)">() | bf::Associativity::Left;
+bf::DefineTerminal OP_SUB = tok.Terminal<R"(\-)">() | bf::Associativity::Left;
 
-bf::DefineTerminal<G> PAR_OPEN = tok.Terminal<R"(\()">();
-bf::DefineTerminal<G> PAR_CLOSE = tok.Terminal<R"(\))">();
+bf::DefineTerminal PAR_OPEN = tok.Terminal<R"(\()">();
+bf::DefineTerminal PAR_CLOSE = tok.Terminal<R"(\))">();
 
 /*
  * Non-Terminals
  */
-bf::DefineNonTerminal<G, double> expression
+bf::DefineNonTerminal<G> expression
     = bf::PR<G>(NUMBER)<=>[](auto &$) { return $[0]; }
     | (PAR_OPEN + expression + PAR_CLOSE)<=>[](auto &$) { return $[1]; }
     | (expression + OP_EXP + expression)<=>[](auto &$) { return std::pow($[0], $[2]); }
@@ -39,7 +38,7 @@ bf::DefineNonTerminal<G, double> expression
     | (expression + OP_SUB + expression)<=>[](auto &$) { return $[0] - $[2]; }
     ;
 
-bf::DefineNonTerminal<G, double> statement
+bf::DefineNonTerminal<G> statement
     = bf::PR<G>(expression)<=>[](auto &$)
     {
         return $[0];
