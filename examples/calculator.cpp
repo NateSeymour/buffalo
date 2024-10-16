@@ -1,30 +1,32 @@
 #include <iostream>
 #include <cmath>
 #include <buffalo/buffalo.h>
-#include <buffalo/spex.h>
 
 /*
  * Grammar Definition
  */
 using G = bf::GrammarDefinition<double>;
-spex::CTRETokenizer<G> tok;
 
 /*
  * Terminals
  */
-bf::DefineTerminal NUMBER = tok.Terminal<R"(\d+(\.\d+)?)">([](auto const &tok) {
+bf::DefineTerminal<G, R"(\d+(\.\d+)?)", double> NUMBER([](auto const &tok) {
     return std::stod(std::string(tok.raw));
 });
 
-bf::DefineTerminal OP_EXP = tok.Terminal<R"(\^)">() | bf::Associativity::Right;
+bf::DefineTerminal<G, R"(\^)"> OP_EXP(bf::Right);
 
-bf::DefineTerminal OP_MUL = tok.Terminal<R"(\*)">() | bf::Associativity::Left;
-bf::DefineTerminal OP_DIV = tok.Terminal<R"(\/)">() | bf::Associativity::Left;
-bf::DefineTerminal OP_ADD = tok.Terminal<R"(\+)">() | bf::Associativity::Left;
-bf::DefineTerminal OP_SUB = tok.Terminal<R"(\-)">() | bf::Associativity::Left;
+bf::DefineTerminal<G, R"(\*)"> OP_MUL(bf::Left);
+bf::DefineTerminal<G, R"(\/)"> OP_DIV(bf::Left);
+bf::DefineTerminal<G, R"(\+)"> OP_ADD(bf::Left);
+bf::DefineTerminal<G, R"(\-)"> OP_SUB(bf::Left);
 
-bf::DefineTerminal PAR_OPEN = tok.Terminal<R"(\()">();
-bf::DefineTerminal PAR_CLOSE = tok.Terminal<R"(\))">();
+bf::DefineTerminal<G, R"(\()"> PAR_OPEN;
+bf::DefineTerminal<G, R"(\))"> PAR_CLOSE;
+
+bf::Terminal<G> terminals[] = { OP_EXP, OP_MUL, OP_DIV, OP_ADD, OP_SUB, PAR_OPEN, PAR_CLOSE };
+
+bf::CTRETokenizer tokenizer(std::to_array(terminals));
 
 /*
  * Non-Terminals
@@ -54,12 +56,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    auto calculator = *bf::SLRParser<G>::Build(tok, statement);
+    auto calculator = *bf::SLRParser<G>::Build(tokenizer, statement);
 
     auto result = calculator.Parse(argv[1]);
     if(!result)
     {
-        std::cerr << result.error().what() << std::endl;
+        std::cerr << result.error().message << std::endl;
+        return 1;
     }
 
     std::cout << *result << std::endl;

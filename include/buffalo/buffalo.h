@@ -14,6 +14,8 @@
 #include <stdexcept>
 #include <variant>
 #include <vector>
+#include <ctre.hpp>
+#include <ctll.hpp>
 
 namespace bf
 {
@@ -46,9 +48,6 @@ namespace bf
     template<typename T>
     concept IGrammar = requires(T)
     {
-        /*
-         * TYPES
-         */
         typename T::ValueType;
     };
 
@@ -67,7 +66,7 @@ namespace bf
     template<IGrammar G>
     class Terminal;
 
-    template<IGrammar G, typename SemanticType>
+    template<IGrammar G, ctll::fixed_string regex, typename SemanticType>
     class DefineTerminal;
 
     template<IGrammar G>
@@ -89,61 +88,44 @@ namespace bf
     class SLRParser;
 
     /**
-     * ERROR
+     * LOCATION
+     * Represents the location of a string of text in `buffer`.
+     * `begin` and `end` represent iterator positions in `buffer`. Each iterator position is in between two characters.
      */
-    class Error : public std::runtime_error
+    struct Location
     {
-    public:
-        Error(char const *error = "Buffalo Generic Error") : runtime_error(error) {}
-    };
+        std::string_view buffer;
+        std::size_t begin;
+        std::size_t end;
 
-    class UnexpectedInputError : public Error
-    {
-    public:
-        UnexpectedInputError() : Error("Unexpected Input") {}
-    };
-
-    template<IGrammar G, typename SemanticType>
-    class SemanticConversionError : public Error
-    {
-        std::string message_ = "";
-
-    public:
-        char const *what() const noexcept override
+        /**
+         *
+         * @param padding Amount of characters before and after snippet to print.
+         * @return
+         */
+        std::string SnippetString(std::size_t padding = 10)
         {
-            return this->message_.c_str();
-        }
-
-        SemanticConversionError()
-        {
-
+            return "";
         }
     };
 
-    class ShiftShiftError : public Error {};
-    class ShiftReduceError : public Error {};
-    class ReduceReduceError : public Error {};
-
-    class UserError : public Error
+    struct Error
     {
-        std::string message_ = "";
-    public:
-        char const *what() const noexcept override
-        {
-            return this->message_.c_str();
-        }
+        std::string message;
 
-        UserError(std::exception const &exception)
-        {
-            this->message_.append("Buffalo UserError caused by following exception:\n");
-            this->message_.append(exception.what());
-        }
+        Error(std::string message) : message(std::move(message)) {}
     };
 
-    class UnexpectedTokenError : public Error
+    struct GrammarDefinitionError : Error
     {
-    public:
-        UnexpectedTokenError() : Error("The parser encountered an unexpected token during parsing!") {}
+        GrammarDefinitionError(std::string message) : Error(std::move(message)) {}
+    };
+
+    struct ParsingError : Error
+    {
+        Location location;
+
+        ParsingError(Location location, std::string message) : Error(std::move(message)), location(location) {}
     };
 
     /**
@@ -162,15 +144,6 @@ namespace bf
             return *this;
         }
     };
-
-    /**
-     * LOCATION
-     */
-     struct Location
-     {
-        std::size_t begin;
-        std::size_t end;
-     };
 
     /**
      * TOKEN
@@ -204,16 +177,7 @@ namespace bf
          * stream of tokens.
          * @return Unique EOS (End of Stream) terminal.
          */
-        Terminal<G> const EOS;
-
-        /**
-         * Creates a new generic Terminal
-         * @return
-         */
-        Terminal<G> Generic(Terminal<G>::ReasonerType reasoner = nullptr) const
-        {
-            return Terminal<G>(reasoner);
-        }
+        std::size_t const EOS = -1;
 
         /**
          * Gets the first token on the input stream.
@@ -230,7 +194,7 @@ namespace bf
             std::size_t index_ = 0;
             std::string_view input_;
 
-            Tokenizer<G> const &tokenizer_;
+            Tokenizer const &tokenizer_;
 
             std::deque<Token<G>> buffer_;
 
@@ -295,6 +259,41 @@ namespace bf
         virtual ~Tokenizer() = default;
     };
 
+    template<IGrammar G, std::size_t terminal_count>
+    class CTRETokenizer : public Tokenizer<G>
+    {
+        std::array<Terminal<G>, terminal_count> terminals_;
+
+    public:
+        std::expected<Token<G>, Error> First(std::string_view input) const override
+        {
+            if(input.empty())
+            {
+                return Token<G> {
+                    .terminal = this->EOS,
+                    .location = {
+                        .begin = 0,
+                        .end = 0,
+                    },
+                };
+            }
+
+            for(auto const &terminal : this->terminals_)
+            {
+                auto token = terminal.lexxer_(terminal, input);
+
+                if(token)
+                {
+                    return *token;
+                }
+            }
+
+            return std::unexpected(Error(""));
+        }
+
+        constexpr CTRETokenizer(std::array<Terminal<G>, terminal_count> terminals) : terminals_(std::move(terminals)) {}
+    };
+
     /**
      * GRAMMAR DEFINITION
      * @tparam GValueType
@@ -310,53 +309,7 @@ namespace bf
         using ValueType = GValueType;
     };
 
-    /**
-     * STATIC IDENTIFIER
-     * Provides a unique static identifier for all object holders.
-     * NOTE: Only valid within the same translation unit!
-     */
-    class StaticIdentifier
-    {
-        inline static std::size_t last_id_ = 0;
-
-    public:
-        std::size_t id = StaticIdentifier::last_id_++;
-
-        operator std::size_t() const
-        {
-            return this->id;
-        }
-
-        bool operator==(StaticIdentifier const &other) const
-        {
-            return this->id == other.id;
-        }
-
-        bool operator<(StaticIdentifier const &other) const
-        {
-            return this->id < other.id;
-        }
-    };
-
-    /**
-     * STATICALLY IDENTIFIED OBJECT
-     */
-    struct StaticallyIdentifiedObject
-    {
-        StaticIdentifier id;
-
-        bool operator==(StaticallyIdentifiedObject const &other) const
-        {
-            return this->id == other.id;
-        }
-
-        bool operator<(StaticallyIdentifiedObject const &other) const
-        {
-            return this->id < other.id;
-        }
-    };
-
-    enum class Associativity
+    enum Associativity
     {
         None,
         Left,
@@ -375,7 +328,7 @@ namespace bf
      * TERMINAL
      */
     template<IGrammar G>
-    class Terminal : public StaticallyIdentifiedObject, public DebugSymbol
+    class Terminal : public DebugSymbol
     {
         friend class Grammar<G>;
         friend class Tokenizer<G>;
@@ -384,12 +337,11 @@ namespace bf
         using ReasonerType = typename G::ValueType(*)(Token<G> const&);
 
     protected:
+        std::size_t id = -1;
         ReasonerType reasoner_ = nullptr;
-
-        Terminal(ReasonerType reasoner = nullptr) : reasoner_(reasoner) {}
+        typename Tokenizer<G>::LexxerType lexxer_ = nullptr;
 
     public:
-        std::size_t precedence = this->id;
         Associativity associativity = Associativity::None;
 
         Terminal &operator|(Associativity new_associativity)
@@ -408,44 +360,68 @@ namespace bf
 
             return std::nullopt;
         }
+
+        constexpr Terminal(ReasonerType reasoner = nullptr, typename Tokenizer<G>::LexxerType lexxer = nullptr) : reasoner_(reasoner), lexxer_(lexxer)  {}
     };
 
     /**
      * DEFINE TERMINAL
      * @tparam G
      */
-    template<IGrammar G, typename SemanticValue = void>
+    template<IGrammar G, ctll::fixed_string regex, typename SemanticType = void>
     class DefineTerminal : public Terminal<G>
     {
     public:
-        SemanticValue operator()(typename G::ValueType &value)
+        SemanticType operator()(typename G::ValueType &value)
         {
             if constexpr(std::variant_size<typename G::ValueType>::value != 0)
             {
-                if(!std::holds_alternative<SemanticValue>(value))
+                if(!std::holds_alternative<SemanticType>(value))
                 {
-                    throw SemanticConversionError<G, SemanticValue>();
+                    throw std::runtime_error("failed to convert type");
                 }
 
-                return std::move(std::get<SemanticValue>(value));
+                return std::move(std::get<SemanticType>(value));
             }
             else
             {
-                return std::move(reinterpret_cast<SemanticValue>(value));
+                return std::move(reinterpret_cast<SemanticType>(value));
             }
         }
 
-        DefineTerminal() = delete;
+        constexpr DefineTerminal(Associativity associativity, typename Terminal<G>::ReasonerType reasoner = nullptr)
+        {
+            this->id = __COUNTER__;
+            this->associativity = associativity;
+            this->reasoner_ = reasoner;
+            this->lexxer_ = [](Terminal<G> terminal, std::string_view input) -> std::optional<Token<G>>
+            {
+                auto match = ctre::starts_with<regex>(input);
 
-        DefineTerminal(Terminal<G>  &terminal) : Terminal<G>(terminal) {}
-        DefineTerminal(Terminal<G> &&terminal) : Terminal<G>(terminal) {}
+                if(!match)
+                {
+                    return std::nullopt;
+                }
+
+                return Token<G> {
+                    .terminal = terminal,
+                    .raw = match.view(),
+                    .location = {
+                        .begin = 0,
+                        .end = match.size(),
+                    },
+                };
+            };
+        }
+
+        constexpr DefineTerminal(typename bf::Terminal<G>::ReasonerType reasoner = nullptr) : DefineTerminal(bf::None, reasoner) {}
     };
 
     /**
      * NON-TERMINAL
      */
     template<IGrammar G>
-    class NonTerminal : public StaticallyIdentifiedObject
+    class NonTerminal
     {
         friend class Grammar<G>;
         friend struct LRState<G>;
@@ -479,7 +455,7 @@ namespace bf
             {
                 if(!std::holds_alternative<SemanticValue>(value))
                 {
-                    throw SemanticConversionError<G, SemanticValue>();
+                    throw std::runtime_error("failed to convert type");
                 }
 
                 return std::move(std::get<SemanticValue>(value));
@@ -1050,18 +1026,18 @@ namespace bf
                                     }
 
                                     // Shift due to associativity rule
-                                    if(follow_terminal.associativity == Associativity::Right)
+                                    if(follow_terminal.associativity == Right)
                                     {
                                         break;
                                     }
 
                                     // Unable to resolve conflict
-                                    return ShiftReduceError();
+                                    return GrammarDefinitionError("ShiftReduce");
                                 }
 
                                 case LRActionType::kReduce:
                                 {
-                                    return ReduceReduceError();
+                                    return GrammarDefinitionError("ReduceReduce");
                                 }
 
                                 default:
@@ -1119,15 +1095,7 @@ namespace bf
 
                     case LRActionType::kShift:
                     {
-                        std::optional<typename G::ValueType> value;
-                        try
-                        {
-                            value = std::move(lookahead->terminal.Reason(*lookahead));
-                        }
-                        catch(std::exception &e)
-                        {
-                            return std::unexpected(UserError(e));
-                        }
+                        std::optional<typename G::ValueType> value = std::move(lookahead->terminal.Reason(*lookahead));;
 
                         if(value)
                         {
@@ -1155,16 +1123,7 @@ namespace bf
                             parse_stack.pop();
                         }
 
-                        std::optional<typename G::ValueType> value;
-                        try
-                        {
-                            value = std::move(action.rule->Transduce(args));
-                        }
-                        catch(std::exception &e)
-                        {
-                            return std::unexpected(UserError(e));
-                        }
-
+                        std::optional<typename G::ValueType> value = std::move(action.rule->Transduce(args));;
                         if(value)
                         {
                             parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_], std::move(*value));
@@ -1178,7 +1137,7 @@ namespace bf
 
                     default:
                     {
-                        return std::unexpected(UnexpectedTokenError());
+                        return std::unexpected(ParsingError(lookahead->location, "Unexpected Token"));
                     }
                 }
             }
