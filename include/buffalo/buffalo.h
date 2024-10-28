@@ -264,9 +264,9 @@ namespace bf
             }
 
             TokenStream(Tokenizer<G> const &tokenizer, std::string_view input, StreamBehavior behavior)
-                : tokenizer_(tokenizer),
+                : behavior_(behavior),
                   input_(input),
-                  behavior_(behavior) {}
+                  tokenizer_(tokenizer) {}
         };
 
         /**
@@ -283,7 +283,7 @@ namespace bf
     };
 
     template<IGrammar G, std::size_t terminal_count>
-    class CTRETokenizer : public Tokenizer<G>
+    class CTRETokenizer final : public Tokenizer<G>
     {
         std::array<Terminal<G>, terminal_count> terminals_;
 
@@ -332,19 +332,22 @@ namespace bf
         using ValueType = GValueType;
     };
 
-    enum Associativity
-    {
-        None,
-        Left,
-        Right,
-    };
-
     /**
      * Struct to hold debug symbol names.
      */
     struct DebugSymbol
     {
         char const *debug_name = "Generic Symbol";
+    };
+
+    /**
+     * Used by the parser to resolve shift-reduce conflicts when terminals have the same precedence.
+     */
+    enum Associativity
+    {
+        None,
+        Left,
+        Right,
     };
 
     /**
