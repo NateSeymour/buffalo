@@ -24,8 +24,7 @@ bf::DefineTerminal<G, R"(\-)"> OP_SUB(bf::Left);
 bf::DefineTerminal<G, R"(\()"> PAR_OPEN;
 bf::DefineTerminal<G, R"(\))"> PAR_CLOSE;
 
-bf::Terminal<G> terminals[] = { OP_EXP, OP_MUL, OP_DIV, OP_ADD, OP_SUB, PAR_OPEN, PAR_CLOSE };
-
+bf::Terminal<G> terminals[] = { NUMBER, OP_EXP, OP_MUL, OP_DIV, OP_ADD, OP_SUB, PAR_OPEN, PAR_CLOSE };
 bf::CTRETokenizer tokenizer(std::to_array(terminals));
 
 /*
@@ -48,7 +47,7 @@ bf::DefineNonTerminal<G> statement
     }
     ;
 
-int main(int argc, char **argv)
+int main(int argc, char const **argv)
 {
     if(argc < 2)
     {

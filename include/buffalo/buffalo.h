@@ -177,7 +177,11 @@ namespace bf
          * stream of tokens.
          * @return Unique EOS (End of Stream) terminal.
          */
-        std::size_t const EOS = -1;
+        Terminal<G> EOS() const
+        {
+            static Terminal<G> EOS;
+            return EOS;
+        }
 
         /**
          * Gets the first token on the input stream.
@@ -186,11 +190,19 @@ namespace bf
          */
         virtual std::expected<Token<G>, Error> First(std::string_view input) const = 0;
 
+        enum StreamBehavior
+        {
+            Strict,
+            Permissive,
+        };
+
         /**
          * Helper to create a stream of tokens from string_view.
          */
         class TokenStream
         {
+            StreamBehavior behavior_;
+
             std::size_t index_ = 0;
             std::string_view input_;
 
@@ -213,7 +225,15 @@ namespace bf
                     auto token = this->tokenizer_.First(this->input_);
                     if(!token)
                     {
-                        return token;
+                        if(this->behavior_ == Strict)
+                        {
+                            return token;
+                        }
+                        else
+                        {
+                            this->input_ = this->input_.substr(1);
+                            continue;
+                        }
                     }
 
                     token->location.begin += this->index_;
@@ -243,7 +263,10 @@ namespace bf
                 return token;
             }
 
-            TokenStream(Tokenizer<G> const &tokenizer, std::string_view input) : tokenizer_(tokenizer), input_(input) {}
+            TokenStream(Tokenizer<G> const &tokenizer, std::string_view input, StreamBehavior behavior)
+                : tokenizer_(tokenizer),
+                  input_(input),
+                  behavior_(behavior) {}
         };
 
         /**
@@ -251,9 +274,9 @@ namespace bf
          * @param input
          * @return
          */
-        TokenStream StreamInput(std::string_view input) const
+        TokenStream StreamInput(std::string_view input, StreamBehavior behavior = Strict) const
         {
-            return TokenStream(*this, input);
+            return TokenStream(*this, input, behavior);
         }
 
         virtual ~Tokenizer() = default;
@@ -270,7 +293,7 @@ namespace bf
             if(input.empty())
             {
                 return Token<G> {
-                    .terminal = this->EOS,
+                    .terminal = this->EOS(),
                     .location = {
                         .begin = 0,
                         .end = 0,
@@ -288,7 +311,7 @@ namespace bf
                 }
             }
 
-            return std::unexpected(Error(""));
+            return std::unexpected(Error("Unexpected token."));
         }
 
         constexpr CTRETokenizer(std::array<Terminal<G>, terminal_count> terminals) : terminals_(std::move(terminals)) {}
@@ -337,12 +360,26 @@ namespace bf
         using ReasonerType = typename G::ValueType(*)(Token<G> const&);
 
     protected:
-        std::size_t id = -1;
+        inline static std::size_t counter = 0;
+
         ReasonerType reasoner_ = nullptr;
-        typename Tokenizer<G>::LexxerType lexxer_ = nullptr;
 
     public:
+        typename Tokenizer<G>::LexxerType lexxer_ = nullptr;
+
+        std::size_t id = Terminal::counter++;
+        std::size_t precedence = -1;
         Associativity associativity = Associativity::None;
+
+        bool operator==(Terminal const &other) const
+        {
+            return this->id == other.id;
+        }
+
+        bool operator<(Terminal const &other) const
+        {
+            return this->id < other.id;
+        }
 
         Terminal &operator|(Associativity new_associativity)
         {
@@ -391,7 +428,7 @@ namespace bf
 
         constexpr DefineTerminal(Associativity associativity, typename Terminal<G>::ReasonerType reasoner = nullptr)
         {
-            this->id = __COUNTER__;
+            this->precedence = this->id;
             this->associativity = associativity;
             this->reasoner_ = reasoner;
             this->lexxer_ = [](Terminal<G> terminal, std::string_view input) -> std::optional<Token<G>>
@@ -522,7 +559,7 @@ namespace bf
         {
             if(this->non_terminal_ && other.non_terminal_)
             {
-                if(*this->non_terminal_ != *other.non_terminal_) return false;
+                if(this->non_terminal_ != other.non_terminal_) return false;
             }
             else if(this->non_terminal_ != other.non_terminal_)
             {
@@ -617,7 +654,7 @@ namespace bf
          */
         void GenerateFollowSet()
         {
-            this->follow_[&root] = { this->tokenizer.EOS };
+            this->follow_[&root] = { this->tokenizer.EOS() };
 
             bool has_change = false;
             do
@@ -1053,7 +1090,7 @@ namespace bf
                 }
             }
 
-            this->action_[0][this->grammar_.tokenizer.EOS] = {
+            this->action_[0][this->grammar_.tokenizer.EOS()] = {
                 .type = LRActionType::kAccept,
             };
 
