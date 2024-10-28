@@ -28,24 +28,26 @@ It supports the definition of terminals, non-terminals and grammar structures al
  * Grammar Definition
  */
 using G = bf::GrammarDefinition<double>;
-spex::CTRETokenizer<G> tok;
 
 /*
  * Terminals
  */
-bf::DefineTerminal NUMBER = tok.Terminal<R"(\d+(\.\d+)?)">([](auto const &tok) {
+bf::DefineTerminal<G, R"(\d+(\.\d+)?)", double> NUMBER([](auto const &tok) {
     return std::stod(std::string(tok.raw));
 });
 
-bf::DefineTerminal OP_EXP = tok.Terminal<R"(\^)">() | bf::Associativity::Right;
+bf::DefineTerminal<G, R"(\^)"> OP_EXP(bf::Right);
 
-bf::DefineTerminal OP_MUL = tok.Terminal<R"(\*)">() | bf::Associativity::Left;
-bf::DefineTerminal OP_DIV = tok.Terminal<R"(\/)">() | bf::Associativity::Left;
-bf::DefineTerminal OP_ADD = tok.Terminal<R"(\+)">() | bf::Associativity::Left;
-bf::DefineTerminal OP_SUB = tok.Terminal<R"(\-)">() | bf::Associativity::Left;
+bf::DefineTerminal<G, R"(\*)"> OP_MUL(bf::Left);
+bf::DefineTerminal<G, R"(\/)"> OP_DIV(bf::Left);
+bf::DefineTerminal<G, R"(\+)"> OP_ADD(bf::Left);
+bf::DefineTerminal<G, R"(\-)"> OP_SUB(bf::Left);
 
-bf::DefineTerminal PAR_OPEN = tok.Terminal<R"(\()">();
-bf::DefineTerminal PAR_CLOSE = tok.Terminal<R"(\))">();
+bf::DefineTerminal<G, R"(\()"> PAR_OPEN;
+bf::DefineTerminal<G, R"(\))"> PAR_CLOSE;
+
+bf::Terminal<G> terminals[] = { NUMBER, OP_EXP, OP_MUL, OP_DIV, OP_ADD, OP_SUB, PAR_OPEN, PAR_CLOSE };
+bf::CTRETokenizer tokenizer(std::to_array(terminals));
 
 /*
  * Non-Terminals
