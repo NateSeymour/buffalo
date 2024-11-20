@@ -185,7 +185,7 @@ TEST(StmtList, FollowSet)
     auto parser = bf::SLRParser<G>::Build(tokenzier, program);
     ASSERT_TRUE(parser);
 
-    auto &grammar = parser->Grammar();
+    auto &grammar = parser->GetGrammar();
     ASSERT_TRUE(grammar.NonTerminalHasFollow(function_definition, STMT_DELIMITER));
 
     ASSERT_TRUE(grammar.HasNonTerminal(function_definition));
