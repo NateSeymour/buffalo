@@ -617,20 +617,37 @@ namespace bf
         Tokenizer<G> const &tokenizer;
         NonTerminal<G> &root;
 
+        bool HasNonTerminal(NonTerminal<G> &non_terminal) const
+        {
+            return this->registered_nonterminals_.contains(&non_terminal);
+        }
+
+        bool NonTerminalHasFollow(NonTerminal<G> &non_terminal, Terminal<G> const &terminal) const
+        {
+            return this->follow_.at(&non_terminal).contains(terminal);
+        }
+
+        bool NonTerminalHasFirst(NonTerminal<G> &non_terminal, Terminal<G> const &terminal) const
+        {
+            return this->first_.at(&non_terminal).contains(terminal);
+        }
+
         /**
          * Simple, but somewhat inefficient algorithm for generating FIRST sets.
          * The FIRST set is the set of all Terminals that a NonTerminal can begin with.
          */
         void GenerateFirstSet()
         {
-            bool has_change = false;
+            bool has_change;
             do
             {
+                has_change = false;
+
                 for(auto const &[nonterminal, rule] : this->production_rules_)
                 {
                     if(rule.sequence_.empty()) continue;
 
-                    has_change = std::visit(overload{
+                    has_change |= std::visit(overload{
                         [&](Terminal<G> terminal)
                         {
                             auto [it, inserted] = this->first_[nonterminal].insert(terminal);
@@ -638,6 +655,11 @@ namespace bf
                         },
                         [&](NonTerminal<G> *child_nonterminal)
                         {
+                            if(child_nonterminal == nonterminal)
+                            {
+                                return false;
+                            }
+
                             auto &parent_first = this->first_[nonterminal];
                             auto &child_first = this->first_[child_nonterminal];
 
@@ -659,9 +681,11 @@ namespace bf
         {
             this->follow_[&root] = { this->tokenizer.EOS() };
 
-            bool has_change = false;
+            bool has_change;
             do
             {
+                has_change = false;
+
                 for(auto &[nonterminal, rule] : this->production_rules_)
                 {
                     for(int i = 0; i < rule.sequence_.size(); i++)
@@ -688,7 +712,7 @@ namespace bf
                         // ELSE process the next token
                         auto follow = rule.sequence_[i + 1];
 
-                        has_change = std::visit(overload{
+                        has_change |= std::visit(overload{
                             [&](Terminal<G> terminal)
                             {
                                 auto [it, inserted] = this->follow_[symbol].insert(terminal);
@@ -1110,6 +1134,11 @@ namespace bf
         SLRParser(Tokenizer<G> const &tokenizer, NonTerminal<G> &start) : grammar_(tokenizer, start) {}
 
     public:
+        Grammar<G> const &Grammar() const
+        {
+            return this->grammar_;
+        }
+
         std::expected<typename G::ValueType, Error> Parse(std::string_view input) override
         {
             auto token_stream = this->grammar_.tokenizer.StreamInput(input);

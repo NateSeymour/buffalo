@@ -29,6 +29,7 @@ target_link_libraries(buffalo INTERFACE ctre::ctre)
 # Tests
 add_executable(buffalo-test
         test/buffalo.test.cpp
+        test/stmtlist.test.cpp
 )
 target_link_libraries(buffalo-test PRIVATE buffalo GTest::gtest_main)
 target_include_directories(buffalo-test PRIVATE include)
