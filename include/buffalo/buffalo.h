@@ -1134,7 +1134,7 @@ namespace bf
         SLRParser(Tokenizer<G> const &tokenizer, NonTerminal<G> &start) : grammar_(tokenizer, start) {}
 
     public:
-        Grammar<G> const &Grammar() const
+        Grammar<G> const &Grammar<G>() const
         {
             return this->grammar_;
         }
