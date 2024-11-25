@@ -1,6 +1,7 @@
 #ifndef BUFFALO2_H
 #define BUFFALO2_H
 
+#include <memory>
 #include <cctype>
 #include <exception>
 #include <expected>
