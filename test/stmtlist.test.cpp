@@ -49,35 +49,6 @@ static bf::DefineTerminal<G, R"(;)"> STMT_DELIMITER;
 
 static bf::DefineTerminal<G, R"(,)"> SEPARATOR;
 
-static bf::Terminal<G> terminals[] = {
-    KW_GIVEN,
-    KW_CALC,
-    KW_PLOT,
-    KW_ON,
-    KW_AS,
-
-    NUMBER,
-    IDENTIFIER,
-
-    OP_EXP,
-    OP_MUL,
-    OP_DIV,
-    OP_ADD,
-    OP_SUB,
-    OP_ASN,
-
-    PAR_OPEN,
-    PAR_CLOSE,
-    BRK_OPEN,
-    BRK_CLOSE,
-
-    STMT_DELIMITER,
-
-    SEPARATOR,
-};
-
-static bf::CTRETokenizer tokenzier(std::to_array(terminals));
-
 static bf::DefineNonTerminal<G, std::unique_ptr<Node>> expression
     = bf::PR<G>(NUMBER)<=>[](auto &$) -> ValueType
     {
@@ -182,7 +153,7 @@ static bf::DefineNonTerminal<G, std::unique_ptr<Node>> program
 
 TEST(StmtList, FollowSet)
 {
-    auto parser = bf::SLRParser<G>::Build(tokenzier, program);
+    auto parser = bf::SLRParser<G>::Build(program);
     ASSERT_TRUE(parser);
 
     auto &grammar = parser->GetGrammar();

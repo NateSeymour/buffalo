@@ -61,9 +61,6 @@ namespace bf
     class ProductionRule;
 
     template<IGrammar G>
-    class Tokenizer;
-
-    template<IGrammar G>
     class Terminal;
 
     template<IGrammar G, ctll::fixed_string regex, typename SemanticType>
@@ -151,7 +148,7 @@ namespace bf
     template<IGrammar G>
     struct Token
     {
-        Terminal<G> terminal;
+        Terminal<G> *terminal;
         std::string_view raw;
         Location location;
 
@@ -159,162 +156,6 @@ namespace bf
         {
             return this->location.end - this->location.begin;
         }
-    };
-
-    /**
-     * TOKENIZER
-     * Virtual class to expose the Tokenizer API.
-     * Child classes EXPECTED to create Terminal<G>'s.
-     */
-    template<IGrammar G>
-    class Tokenizer
-    {
-    public:
-        using LexxerType = std::optional<Token<G>>(*)(Terminal<G>, std::string_view);
-
-        /**
-         * Unique Terminal<G> (ensured uniqueness through StaticallyIdentifiedObject) that marks the end of a
-         * stream of tokens.
-         * @return Unique EOS (End of Stream) terminal.
-         */
-        Terminal<G> EOS() const
-        {
-            static Terminal<G> EOS;
-            return EOS;
-        }
-
-        /**
-         * Gets the first token on the input stream.
-         * @param input
-         * @return
-         */
-        virtual std::expected<Token<G>, Error> First(std::string_view input) const = 0;
-
-        enum StreamBehavior
-        {
-            Strict,
-            Permissive,
-        };
-
-        /**
-         * Helper to create a stream of tokens from string_view.
-         */
-        class TokenStream
-        {
-            StreamBehavior behavior_;
-
-            std::size_t index_ = 0;
-            std::string_view input_;
-
-            Tokenizer const &tokenizer_;
-
-            std::deque<Token<G>> buffer_;
-
-        public:
-            std::expected<Token<G>, Error> Peek(std::size_t lookahead = 1)
-            {
-                // Fill buffer to requested lookahead
-                for(int i = 0; i < lookahead - buffer_.size(); i++)
-                {
-                    while(!this->input_.empty() && std::isspace(this->input_[0]))
-                    {
-                        this->input_ = this->input_.substr(1);
-                        this->index_++;
-                    }
-
-                    auto token = this->tokenizer_.First(this->input_);
-                    if(!token)
-                    {
-                        if(this->behavior_ == Strict)
-                        {
-                            return token;
-                        }
-                        else
-                        {
-                            this->input_ = this->input_.substr(1);
-                            continue;
-                        }
-                    }
-
-                    token->location.begin += this->index_;
-                    token->location.end += this->index_;
-
-                    this->index_ += token->Size();
-                    this->input_ = this->input_.substr(token->Size());
-
-                    this->buffer_.push_back(*token);
-                }
-
-                // Feed from buffer first
-                if(this->buffer_.size() >= lookahead)
-                {
-                    return this->buffer_[lookahead - 1];
-                }
-            }
-
-            std::expected<Token<G>, Error> Consume()
-            {
-                auto token = this->Peek(1);
-                if(token)
-                {
-                    this->buffer_.pop_front();
-                }
-
-                return token;
-            }
-
-            TokenStream(Tokenizer<G> const &tokenizer, std::string_view input, StreamBehavior behavior)
-                : behavior_(behavior),
-                  input_(input),
-                  tokenizer_(tokenizer) {}
-        };
-
-        /**
-         * Generate stream of tokens from an std::string_view.
-         * @param input
-         * @return
-         */
-        TokenStream StreamInput(std::string_view input, StreamBehavior behavior = Strict) const
-        {
-            return TokenStream(*this, input, behavior);
-        }
-
-        virtual ~Tokenizer() = default;
-    };
-
-    template<IGrammar G, std::size_t terminal_count>
-    class CTRETokenizer final : public Tokenizer<G>
-    {
-        std::array<Terminal<G>, terminal_count> terminals_;
-
-    public:
-        std::expected<Token<G>, Error> First(std::string_view input) const override
-        {
-            if(input.empty())
-            {
-                return Token<G> {
-                    .terminal = this->EOS(),
-                    .location = {
-                        .begin = 0,
-                        .end = 0,
-                    },
-                };
-            }
-
-            for(auto const &terminal : this->terminals_)
-            {
-                auto token = terminal.lexxer_(terminal, input);
-
-                if(token)
-                {
-                    return *token;
-                }
-            }
-
-            return std::unexpected(Error("Unexpected token."));
-        }
-
-        constexpr CTRETokenizer(std::array<Terminal<G>, terminal_count> terminals) : terminals_(std::move(terminals)) {}
     };
 
     /**
@@ -357,7 +198,6 @@ namespace bf
     class Terminal : public DebugSymbol
     {
         friend class Grammar<G>;
-        friend class Tokenizer<G>;
 
     public:
         using ReasonerType = typename G::ValueType(*)(Token<G> const&);
@@ -367,29 +207,11 @@ namespace bf
 
         ReasonerType reasoner_ = nullptr;
 
+        Terminal() = default;
+
     public:
-        typename Tokenizer<G>::LexxerType lexxer_ = nullptr;
-
-        std::size_t id = Terminal::counter++;
-        std::size_t precedence = -1;
+        std::size_t precedence = Terminal::counter++;
         Associativity associativity = Associativity::None;
-
-        bool operator==(Terminal const &other) const
-        {
-            return this->id == other.id;
-        }
-
-        bool operator<(Terminal const &other) const
-        {
-            return this->id < other.id;
-        }
-
-        Terminal &operator|(Associativity new_associativity)
-        {
-            this->associativity = new_associativity;
-
-            return *this;
-        }
 
         std::optional<typename G::ValueType> Reason(Token<G> const &token) const
         {
@@ -401,7 +223,13 @@ namespace bf
             return std::nullopt;
         }
 
-        constexpr Terminal(ReasonerType reasoner = nullptr, typename Tokenizer<G>::LexxerType lexxer = nullptr) : reasoner_(reasoner), lexxer_(lexxer)  {}
+        virtual std::optional<Token<G>> Lex(std::string_view input) const
+        {
+            return std::nullopt;
+        }
+
+        Terminal(Terminal<G>  &&) = delete;
+        Terminal(Terminal<G> const &) = delete;
     };
 
     /**
@@ -429,29 +257,29 @@ namespace bf
             }
         }
 
-        constexpr DefineTerminal(Associativity associativity, typename Terminal<G>::ReasonerType reasoner = nullptr)
+        std::optional<Token<G>> Lex(std::string_view input) const override
         {
-            this->precedence = this->id;
-            this->associativity = associativity;
-            this->reasoner_ = reasoner;
-            this->lexxer_ = [](Terminal<G> terminal, std::string_view input) -> std::optional<Token<G>>
+            auto match = ctre::starts_with<regex>(input);
+
+            if(!match)
             {
-                auto match = ctre::starts_with<regex>(input);
+                return std::nullopt;
+            }
 
-                if(!match)
-                {
-                    return std::nullopt;
-                }
-
-                return Token<G> {
-                    .terminal = terminal,
+            return Token<G> {
+                    .terminal = (Terminal<G>*)this,
                     .raw = match.view(),
                     .location = {
-                        .begin = 0,
-                        .end = match.size(),
+                            .begin = 0,
+                            .end = match.size(),
                     },
-                };
             };
+        }
+
+        constexpr DefineTerminal(Associativity associativity, typename Terminal<G>::ReasonerType reasoner = nullptr)
+        {
+            this->associativity = associativity;
+            this->reasoner_ = reasoner;
         }
 
         constexpr DefineTerminal(typename bf::Terminal<G>::ReasonerType reasoner = nullptr) : DefineTerminal(bf::None, reasoner) {}
@@ -516,7 +344,7 @@ namespace bf
      * SYMBOL
      */
     template<IGrammar G>
-    using Symbol = std::variant<Terminal<G>, NonTerminal<G>*>;
+    using Symbol = std::variant<Terminal<G>*, NonTerminal<G>*>;
 
     /*
      * PRODUCTION RULES
@@ -537,9 +365,9 @@ namespace bf
         NonTerminal<G> *non_terminal_ = nullptr;
 
     public:
-        ProductionRule &operator+(Terminal<G> const &rhs)
+        ProductionRule &operator+(Terminal<G> &rhs)
         {
-            this->sequence_.push_back(rhs);
+            this->sequence_.push_back(&rhs);
 
             return *this;
         }
@@ -589,7 +417,7 @@ namespace bf
             return std::nullopt;
         }
 
-        ProductionRule(Terminal<G> const &terminal) : sequence_({ terminal }) {}
+        ProductionRule(Terminal<G>       &terminal) : sequence_({ &terminal }) {}
         ProductionRule(NonTerminal<G> &nonterminal) : sequence_({ &nonterminal }) {}
     };
 
@@ -606,30 +434,37 @@ namespace bf
         friend class SLRParser<G>;
 
     protected:
-        std::set<NonTerminal<G>*> registered_nonterminals_;
-        std::map<NonTerminal<G>*, std::set<Terminal<G>>> first_;
-        std::map<NonTerminal<G>*, std::set<Terminal<G>>> follow_;
+        /**
+         * Unique pointer to an EOS terminal for this grammar. This allows the grammar to be moved while still
+         * retaining the ability to perform pointer comparison on the EOS terminal.
+         */
+        std::unique_ptr<Terminal<G>> EOS;
+
+        std::set<NonTerminal<G>*> nonterminals_;
+        std::set<Terminal<G>*> terminals_;
+
+        std::map<NonTerminal<G>*, std::set<Terminal<G>*>> first_;
+        std::map<NonTerminal<G>*, std::set<Terminal<G>*>> follow_;
 
         /// List of all production rules along with their respective NonTerminal
         std::vector<std::pair<NonTerminal<G>*, ProductionRule<G>>> production_rules_;
 
     public:
-        Tokenizer<G> const &tokenizer;
         NonTerminal<G> &root;
 
         bool HasNonTerminal(NonTerminal<G> &non_terminal) const
         {
-            return this->registered_nonterminals_.contains(&non_terminal);
+            return this->nonterminals_.contains(&non_terminal);
         }
 
-        bool NonTerminalHasFollow(NonTerminal<G> &non_terminal, Terminal<G> const &terminal) const
+        bool NonTerminalHasFollow(NonTerminal<G> &non_terminal, Terminal<G> &terminal) const
         {
-            return this->follow_.at(&non_terminal).contains(terminal);
+            return this->follow_.at(&non_terminal).contains(&terminal);
         }
 
-        bool NonTerminalHasFirst(NonTerminal<G> &non_terminal, Terminal<G> const &terminal) const
+        bool NonTerminalHasFirst(NonTerminal<G> &non_terminal, Terminal<G> &terminal) const
         {
-            return this->first_.at(&non_terminal).contains(terminal);
+            return this->first_.at(&non_terminal).contains(&terminal);
         }
 
         /**
@@ -648,7 +483,7 @@ namespace bf
                     if(rule.sequence_.empty()) continue;
 
                     has_change |= std::visit(overload{
-                        [&](Terminal<G> terminal)
+                        [&](Terminal<G> *terminal)
                         {
                             auto [it, inserted] = this->first_[nonterminal].insert(terminal);
                             return inserted;
@@ -679,7 +514,7 @@ namespace bf
          */
         void GenerateFollowSet()
         {
-            this->follow_[&root] = { this->tokenizer.EOS() };
+            this->follow_[&root] = { this->EOS.get() };
 
             bool has_change;
             do
@@ -691,7 +526,7 @@ namespace bf
                     for(int i = 0; i < rule.sequence_.size(); i++)
                     {
                         // Skip over Terminals
-                        if(std::holds_alternative<Terminal<G>>(rule.sequence_[i])) continue;
+                        if(std::holds_alternative<Terminal<G>*>(rule.sequence_[i])) continue;
 
                         // Process NonTerminal
                         auto symbol = std::get<NonTerminal<G>*>(rule.sequence_[i]);
@@ -713,7 +548,7 @@ namespace bf
                         auto follow = rule.sequence_[i + 1];
 
                         has_change |= std::visit(overload{
-                            [&](Terminal<G> terminal)
+                            [&](Terminal<G> *terminal)
                             {
                                 auto [it, inserted] = this->follow_[symbol].insert(terminal);
                                 return inserted;
@@ -734,29 +569,29 @@ namespace bf
             } while(has_change);
         }
 
-        void RegisterNonTerminals(NonTerminal<G> *nonterminal)
+        void RegisterSymbols(NonTerminal<G> *nonterminal)
         {
-            this->registered_nonterminals_.insert(nonterminal);
+            this->nonterminals_.insert(nonterminal);
 
             for(auto &rule : nonterminal->rules_)
             {
                 rule.non_terminal_ = nonterminal;
-                Symbol<G> *last_terminal = nullptr;
+                Terminal<G> *last_terminal = nullptr;
 
                 this->production_rules_.push_back({nonterminal, rule});
 
                 for(auto &symbol : rule.sequence_)
                 {
                     std::visit(overload{
-                        [&](Terminal<G> terminal)
+                        [&](Terminal<G> *terminal)
                         {
-                            last_terminal = &symbol;
+                            last_terminal = terminal;
                         },
                         [&](NonTerminal<G> *child_nonterminal)
                         {
-                            if(this->registered_nonterminals_.contains(child_nonterminal)) return;
+                            if(this->nonterminals_.contains(child_nonterminal)) return;
 
-                            this->RegisterNonTerminals(child_nonterminal);
+                            this->RegisterSymbols(child_nonterminal);
                         }
                     }, symbol);
                 }
@@ -764,18 +599,22 @@ namespace bf
                 // Rule precedence defaults to the precedence of the LAST terminal in sequence.
                 if(last_terminal)
                 {
-                    rule.precedence = std::get<Terminal<G>>(*last_terminal).precedence;
+                    rule.precedence = last_terminal->precedence;
                 }
             }
         }
 
-        Grammar(Tokenizer<G> const &tokenizer, NonTerminal<G> &start) : tokenizer(tokenizer), root(start)
+        Grammar(NonTerminal<G> &start) : root(start)
         {
-            this->RegisterNonTerminals(&start);
+            this->EOS = std::make_unique<DefineTerminal<G, R"(\Z)">>();
+
+            this->RegisterSymbols(&start);
 
             this->GenerateFirstSet();
             this->GenerateFollowSet();
         }
+
+        Grammar() = delete;
     };
 
     /*
@@ -867,7 +706,7 @@ namespace bf
                 if(closure[i].Complete()) continue;
 
                 std::visit(overload{
-                    [](Terminal<G> terminal) { /* Do Nothing */ },
+                    [](Terminal<G> *terminal) { /* Do Nothing */ },
                     [&](NonTerminal<G> *non_terminal)
                     {
                         if(closed_nonterminals.contains(non_terminal)) return;
@@ -977,8 +816,8 @@ namespace bf
     {
         Grammar<G> grammar_;
 
-        std::map<lrstate_id_t, std::map<Terminal<G>, LRAction<G>>> action_;
-        std::map<lrstate_id_t, std::map<NonTerminal<G> *, lrstate_id_t>> goto_;
+        std::map<lrstate_id_t, std::map<Terminal<G>*, LRAction<G>>> action_;
+        std::map<lrstate_id_t, std::map<NonTerminal<G>*, lrstate_id_t>> goto_;
 
         struct ParseStackItem
         {
@@ -1035,7 +874,7 @@ namespace bf
                     // Create SHIFT/GOTO entries in parsing tables
                     std::visit(overload{
                         // Create ACTION
-                        [&](Terminal<G> terminal)
+                        [&](Terminal<G> *terminal)
                         {
                             this->action_[i][terminal] = {
                                 .type = LRActionType::kShift,
@@ -1064,7 +903,7 @@ namespace bf
                                 case LRActionType::kShift:
                                 {
                                     // Reduce due to higher precedence
-                                    if(item.rule->precedence < follow_terminal.precedence)
+                                    if(item.rule->precedence < follow_terminal->precedence)
                                     {
                                         this->action_[i][follow_terminal] = {
                                             .type = LRActionType::kReduce,
@@ -1074,13 +913,13 @@ namespace bf
                                     }
 
                                     // Shift due to lower precedence
-                                    if(item.rule->precedence > follow_terminal.precedence)
+                                    if(item.rule->precedence > follow_terminal->precedence)
                                     {
                                         break;
                                     }
 
                                     // Reduce due to associativity rule
-                                    if(follow_terminal.associativity == Associativity::Left)
+                                    if(follow_terminal->associativity == Associativity::Left)
                                     {
                                         this->action_[i][follow_terminal] = {
                                             .type = LRActionType::kReduce,
@@ -1090,7 +929,7 @@ namespace bf
                                     }
 
                                     // Shift due to associativity rule
-                                    if(follow_terminal.associativity == Right)
+                                    if(follow_terminal->associativity == Right)
                                     {
                                         break;
                                     }
@@ -1117,7 +956,7 @@ namespace bf
                 }
             }
 
-            this->action_[0][this->grammar_.tokenizer.EOS()] = {
+            this->action_[0][this->grammar_.EOS.get()] = {
                 .type = LRActionType::kAccept,
             };
 
@@ -1131,7 +970,7 @@ namespace bf
          * @param tokenizer
          * @param start
          */
-        SLRParser(Tokenizer<G> const &tokenizer, NonTerminal<G> &start) : grammar_(tokenizer, start) {}
+        SLRParser(NonTerminal<G> &start) : grammar_(start) {}
 
     public:
         Grammar<G> const &GetGrammar() const
@@ -1141,17 +980,30 @@ namespace bf
 
         std::expected<typename G::ValueType, Error> Parse(std::string_view input) override
         {
-            auto token_stream = this->grammar_.tokenizer.StreamInput(input);
-
             std::stack<ParseStackItem> parse_stack;
             parse_stack.emplace(0);
 
+            std::size_t index = 0;
+
             while(true)
             {
-                std::expected<Token<G>, Error> lookahead = token_stream.Peek();
+                lrstate_id_t state = parse_stack.top().state;
+
+                while(index < input.size() && std::isspace(input[index]))
+                {
+                    index++;
+                }
+
+                std::optional<Token<G>> lookahead = std::nullopt;
+                for(auto &[terminal, action] : this->action_[state])
+                {
+                    lookahead = terminal->Lex(input.substr(index));
+                    if(lookahead) break;
+                }
+
                 if(!lookahead)
                 {
-                    return std::unexpected(lookahead.error());
+                    return std::unexpected(Error{"Unexpected Token!"});
                 }
 
                 LRAction<G> action = this->action_[parse_stack.top().state][lookahead->terminal];
@@ -1164,7 +1016,7 @@ namespace bf
 
                     case LRActionType::kShift:
                     {
-                        std::optional<typename G::ValueType> value = std::move(lookahead->terminal.Reason(*lookahead));;
+                        std::optional<typename G::ValueType> value = std::move(lookahead->terminal->Reason(*lookahead));
 
                         if(value)
                         {
@@ -1175,7 +1027,7 @@ namespace bf
                             parse_stack.emplace(action.state);
                         }
 
-                        token_stream.Consume();
+                        index += lookahead->Size();
                         break;
                     }
 
@@ -1192,7 +1044,7 @@ namespace bf
                             parse_stack.pop();
                         }
 
-                        std::optional<typename G::ValueType> value = std::move(action.rule->Transduce(args));;
+                        std::optional<typename G::ValueType> value = std::move(action.rule->Transduce(args));
                         if(value)
                         {
                             parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_], std::move(*value));
@@ -1212,9 +1064,9 @@ namespace bf
             }
         }
 
-        static std::expected<SLRParser, Error> Build(Tokenizer<G> const &tokenizer, NonTerminal<G> &start)
+        static std::expected<SLRParser, Error> Build(NonTerminal<G> &start)
         {
-            SLRParser parser(tokenizer, start);
+            SLRParser parser(start);
 
             auto error = parser.BuildParsingTables();
             if(error)
