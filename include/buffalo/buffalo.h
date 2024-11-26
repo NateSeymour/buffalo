@@ -50,6 +50,7 @@ namespace bf
     concept IGrammar = requires(T)
     {
         typename T::ValueType;
+        typename T::UserDataType;
     };
 
     /*
@@ -160,10 +161,15 @@ namespace bf
     };
 
     /**
+     * Empty dummy struct to act as default for Grammar user data.
+     */
+    struct Dummy {};
+
+    /**
      * GRAMMAR DEFINITION
      * @tparam GValueType
      */
-    template<typename GValueType>
+    template<typename GValueType, typename GUserDataType = Dummy>
     requires std::constructible_from<GValueType>
     class GrammarDefinition
     {
@@ -172,6 +178,7 @@ namespace bf
          * TYPES
          */
         using ValueType = GValueType;
+        using UserDataType = GUserDataType;
     };
 
     /**
@@ -213,6 +220,7 @@ namespace bf
     public:
         std::size_t precedence = Terminal::counter++;
         Associativity associativity = Associativity::None;
+        typename G::UserDataType user_data;
 
         std::optional<typename G::ValueType> Reason(Token<G> const &token) const
         {
@@ -277,13 +285,14 @@ namespace bf
             };
         }
 
-        constexpr DefineTerminal(Associativity associativity, typename Terminal<G>::ReasonerType reasoner = nullptr)
+        constexpr DefineTerminal(Associativity associativity, typename Terminal<G>::ReasonerType reasoner = nullptr, typename G::UserDataType user_data = {})
         {
             this->associativity = associativity;
             this->reasoner_ = reasoner;
+            this->user_data = std::move(user_data);
         }
 
-        constexpr DefineTerminal(typename bf::Terminal<G>::ReasonerType reasoner = nullptr) : DefineTerminal(bf::None, reasoner) {}
+        constexpr DefineTerminal(typename bf::Terminal<G>::ReasonerType reasoner = nullptr, typename G::UserDataType user_data = {}) : DefineTerminal(bf::None, reasoner, std::move(user_data)) {}
     };
 
     /**
