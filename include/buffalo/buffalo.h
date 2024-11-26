@@ -1,12 +1,9 @@
 #ifndef BUFFALO2_H
 #define BUFFALO2_H
 
-#include <memory>
+#include <algorithm>
 #include <cctype>
-#include <exception>
 #include <expected>
-#include <format>
-#include <functional>
 #include <map>
 #include <optional>
 #include <ranges>
@@ -285,14 +282,19 @@ namespace bf
             };
         }
 
-        constexpr DefineTerminal(Associativity associativity, typename Terminal<G>::ReasonerType reasoner = nullptr, typename G::UserDataType user_data = {})
+        constexpr DefineTerminal(Associativity assoc = bf::None, typename G::UserDataType user_data = {}, typename Terminal<G>::ReasonerType reasoner = nullptr)
         {
-            this->associativity = associativity;
+            this->associativity = assoc;
+            this->user_data = user_data;
             this->reasoner_ = reasoner;
-            this->user_data = std::move(user_data);
         }
 
-        constexpr DefineTerminal(typename bf::Terminal<G>::ReasonerType reasoner = nullptr, typename G::UserDataType user_data = {}) : DefineTerminal(bf::None, reasoner, std::move(user_data)) {}
+        constexpr DefineTerminal(Associativity assoc, typename Terminal<G>::ReasonerType reasoner) : DefineTerminal(assoc, {}, reasoner) {}
+
+        constexpr DefineTerminal(typename G::UserDataType user_data) : DefineTerminal(bf::None, user_data, nullptr) {}
+        constexpr DefineTerminal(typename G::UserDataType user_data, typename Terminal<G>::ReasonerType reasoner) : DefineTerminal(bf::None, user_data, reasoner) {}
+
+        constexpr DefineTerminal(typename Terminal<G>::ReasonerType reasoner) : DefineTerminal(bf::None, {}, reasoner) {}
     };
 
     /**
@@ -596,6 +598,7 @@ namespace bf
                         [&](Terminal<G> *terminal)
                         {
                             last_terminal = terminal;
+                            this->terminals_.insert(terminal);
                         },
                         [&](NonTerminal<G> *child_nonterminal)
                         {
@@ -617,6 +620,7 @@ namespace bf
         Grammar(NonTerminal<G> &start) : root(start)
         {
             this->EOS = std::make_unique<DefineTerminal<G, R"(\Z)">>();
+            this->terminals_.insert(this->EOS.get());
 
             this->RegisterSymbols(&start);
 
@@ -812,7 +816,7 @@ namespace bf
     class Parser
     {
     public:
-        virtual std::expected<typename G::ValueType, Error> Parse(std::string_view input) = 0;
+        virtual std::expected<typename G::ValueType, Error> Parse(std::string_view input,  std::vector<Token<G>> *tokens) = 0;
 
         virtual ~Parser() = default;
     };
@@ -836,6 +840,67 @@ namespace bf
 
             ParseStackItem(lrstate_id_t state) : state(state) {}
             ParseStackItem(lrstate_id_t state, typename G::ValueType value) : state(state), value(std::move(value)) {}
+        };
+
+        struct Tokenizer
+        {
+            SLRParser<G> const &parser;
+            std::string_view input;
+            std::size_t index = 0;
+
+            std::vector<Token<G>> *tokens;
+
+            std::optional<Token<G>> Peek(lrstate_id_t state = 0, bool permissive = false)
+            {
+                while(this->index < this->input.size() && std::isspace(this->input[this->index])) this->index++;
+
+                // IMPORTANT: No need to check for EOF, because it is checked for by special EOF terminal!
+
+                if(permissive)
+                {
+                    for(auto terminal : this->parser.grammar_.terminals_)
+                    {
+                        auto token = terminal->Lex(this->input.substr(this->index));
+                        if(token)
+                        {
+                            token->location.begin += this->index;
+                            token->location.end += this->index;
+
+                            return token;
+                        }
+                    }
+
+                    // No token was matched. So we increment the index to skip this character.
+                    index++;
+                }
+                else
+                {
+                    for(auto terminal : this->parser.action_.at(state) | std::views::keys)
+                    {
+                        auto token = terminal->Lex(this->input.substr(this->index));
+                        if(token)
+                        {
+                            token->location.begin += this->index;
+                            token->location.end += this->index;
+
+                            return token;
+                        }
+                    }
+                }
+
+                return std::nullopt;
+            }
+
+            void Consume(Token<G> const &token)
+            {
+                this->index += token.Size();
+                if(tokens)
+                {
+                    tokens->push_back(token);
+                }
+            }
+
+            Tokenizer(SLRParser<G> const &parser, std::string_view input, std::vector<Token<G>> *tokens = nullptr) : parser(parser), input(input), tokens(tokens) {}
         };
 
         /**
@@ -988,31 +1053,35 @@ namespace bf
             return this->grammar_;
         }
 
-        std::expected<typename G::ValueType, Error> Parse(std::string_view input) override
+        std::expected<typename G::ValueType, Error> Parse(std::string_view input, std::vector<Token<G>> *tokens = nullptr) override
         {
+            Tokenizer tokenizer(*this, input, tokens);
+
             std::stack<ParseStackItem> parse_stack;
             parse_stack.emplace(0);
-
-            std::size_t index = 0;
 
             while(true)
             {
                 lrstate_id_t state = parse_stack.top().state;
 
-                while(index < input.size() && std::isspace(input[index]))
-                {
-                    index++;
-                }
-
-                std::optional<Token<G>> lookahead = std::nullopt;
-                for(auto &[terminal, action] : this->action_[state])
-                {
-                    lookahead = terminal->Lex(input.substr(index));
-                    if(lookahead) break;
-                }
-
+                std::optional<Token<G>> lookahead = tokenizer.Peek(state);
                 if(!lookahead)
                 {
+                    // Permissively consume rest of tokens
+                    if(tokens)
+                    {
+                        while(true)
+                        {
+                            lookahead = tokenizer.Peek(0, true);
+                            if(!lookahead) continue;
+                            if(lookahead->terminal == this->grammar_.EOS.get())
+                            {
+                                break;
+                            }
+                            tokenizer.Consume(*lookahead);
+                        }
+                    }
+
                     return std::unexpected(Error{"Unexpected Token!"});
                 }
 
@@ -1037,7 +1106,7 @@ namespace bf
                             parse_stack.emplace(action.state);
                         }
 
-                        index += lookahead->Size();
+                        tokenizer.Consume(*lookahead);
                         break;
                     }
 
