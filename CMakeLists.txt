@@ -12,13 +12,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(ctre)
 
-FetchContent_Declare(
-        GTEST
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG main
-)
-FetchContent_MakeAvailable(GTEST)
-
 # Buffalo
 add_library(buffalo INTERFACE
         include/buffalo/buffalo.h
@@ -27,11 +20,21 @@ target_include_directories(buffalo INTERFACE include)
 target_link_libraries(buffalo INTERFACE ctre::ctre)
 
 # Tests
-add_executable(buffalo-test
-        test/buffalo.test.cpp
-)
-target_link_libraries(buffalo-test PRIVATE buffalo GTest::gtest_main)
-target_include_directories(buffalo-test PRIVATE include)
+option(BUFFALO_ENABLE_TESTS "Include googletest and enable test target" ON)
+if(BUFFALO_ENABLE_TESTS)
+    FetchContent_Declare(
+            GTEST
+            GIT_REPOSITORY https://github.com/google/googletest.git
+            GIT_TAG main
+    )
+    FetchContent_MakeAvailable(GTEST)
+
+    add_executable(buffalo-test
+            test/buffalo.test.cpp
+    )
+    target_link_libraries(buffalo-test PRIVATE buffalo GTest::gtest_main)
+    target_include_directories(buffalo-test PRIVATE include)
+endif()
 
 # Examples
 add_executable(example-calculator
