@@ -57,53 +57,5 @@ TEST(Parser, Evaluation)
     auto res = parser.Parse("3 * 3 + 4^2 - (9 / 3)");
     ASSERT_TRUE(res.has_value());
 
-    ASSERT_EQ(*res, 22.0);
-}
-
-TEST(Tokenization, Strict)
-{
-    auto parser = *bf::SLRParser<G>::Build(statement);
-
-    std::vector<bf::Token<G>> tokens;
-    auto result = parser.Parse("3 + 5 - 2", &tokens);
-
-    ASSERT_TRUE(result.has_value());
-
-    ASSERT_EQ(tokens.size(), 5);
-
-    ASSERT_EQ(tokens[0].terminal, &NUMBER);
-    ASSERT_EQ(tokens[0].location.begin, 0);
-
-    ASSERT_EQ(tokens[1].terminal, &OP_ADD);
-    ASSERT_EQ(tokens[1].location.begin, 2);
-
-    ASSERT_EQ(tokens[2].terminal, &NUMBER);
-    ASSERT_EQ(tokens[2].location.begin, 4);
-
-    ASSERT_EQ(tokens[3].terminal, &OP_SUB);
-    ASSERT_EQ(tokens[3].location.begin, 6);
-
-    ASSERT_EQ(tokens[4].terminal, &NUMBER);
-    ASSERT_EQ(tokens[4].location.begin, 8);
-}
-
-TEST(Tokenization, Permissive)
-{
-    auto parser = *bf::SLRParser<G>::Build(statement);
-
-    std::vector<bf::Token<G>> tokens;
-    auto result = parser.Parse("3[[[+]]]&0", &tokens);
-
-    ASSERT_FALSE(result.has_value());
-
-    ASSERT_EQ(tokens.size(), 3);
-
-    ASSERT_EQ(tokens[0].terminal, &NUMBER);
-    ASSERT_EQ(tokens[0].location.begin, 0);
-
-    ASSERT_EQ(tokens[1].terminal, &OP_ADD);
-    ASSERT_EQ(tokens[1].location.begin, 4);
-
-    ASSERT_EQ(tokens[2].terminal, &NUMBER);
-    ASSERT_EQ(tokens[2].location.begin, 9);
+    ASSERT_EQ(res->root.value, 22.0);
 }

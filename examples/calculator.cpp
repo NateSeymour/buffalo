@@ -57,9 +57,9 @@ int main(int argc, char const **argv)
     auto result = calculator.Parse(argv[1]);
     if(!result)
     {
-        std::cerr << result.error().message << std::endl;
+        std::cerr << result.error().what() << std::endl;
         return 1;
     }
 
-    std::cout << *result << std::endl;
+    std::cout << result->root.value << std::endl;
 }

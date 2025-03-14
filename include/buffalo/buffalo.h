@@ -1,20 +1,20 @@
 #ifndef BUFFALO2_H
 #define BUFFALO2_H
 
-#include <memory>
 #include <algorithm>
 #include <cctype>
+#include <ctll.hpp>
+#include <ctre.hpp>
 #include <expected>
+#include <format>
+#include <list>
 #include <map>
 #include <optional>
 #include <ranges>
 #include <set>
-#include <stack>
 #include <stdexcept>
 #include <variant>
 #include <vector>
-#include <ctre.hpp>
-#include <ctll.hpp>
 
 namespace bf
 {
@@ -40,6 +40,18 @@ namespace bf
 
     template<class... Ts>
     overload(Ts...) -> overload<Ts...>;
+
+    [[nodiscard]] inline std::string utf32_to_string(char32_t const *utf32, std::size_t size)
+    {
+        std::string buffer(size, '0');
+
+        for (std::size_t i = 0; i < size; i++)
+        {
+            buffer[i] = static_cast<char>(utf32[i]);
+        }
+
+        return std::move(buffer);
+    }
 
     /*
      * GRAMMAR DEFINITION
@@ -100,29 +112,45 @@ namespace bf
          * @param padding Amount of characters before and after snippet to print.
          * @return
          */
-        std::string SnippetString(std::size_t padding = 10)
+        [[nodiscard]] std::string_view SnippetString(std::size_t padding = 10) const
         {
-            return "";
+            std::size_t start = std::min(static_cast<std::size_t>(0), this->begin - padding);
+            std::size_t n = this->end - this->begin + padding;
+
+            return buffer.substr(start, n);
         }
     };
 
-    struct Error
+    class Error : public std::exception
     {
-        std::string message;
+    protected:
+        std::string message_;
 
-        Error(std::string message) : message(std::move(message)) {}
+    public:
+        [[nodiscard]] char const *what() const noexcept override
+        {
+            return this->message_.c_str();
+        }
+
+        Error(std::string message) : message_(std::move(message)) {}
+        Error() = default;
     };
 
-    struct GrammarDefinitionError : Error
+    class GrammarDefinitionError : public Error
     {
+    public:
         GrammarDefinitionError(std::string message) : Error(std::move(message)) {}
     };
 
-    struct ParsingError : Error
+    class ParsingError : public Error
     {
-        Location location;
+        Location location_;
 
-        ParsingError(Location location, std::string message) : Error(std::move(message)), location(location) {}
+    public:
+        ParsingError(Location location, std::string_view message) : location_(location)
+        {
+            this->message_ = std::format("{}\n{}", message, location.SnippetString());
+        }
     };
 
     /**
@@ -144,6 +172,7 @@ namespace bf
 
     /**
      * TOKEN
+     * Resolved by the lexxer at scan time.
      */
     template<IGrammar G>
     struct Token
@@ -156,6 +185,44 @@ namespace bf
         {
             return this->location.end - this->location.begin;
         }
+    };
+
+    /**
+     * VALUE TOKEN
+     * Passed in array to NonTerminals at transduction time.
+     */
+    template<IGrammar G>
+    struct ValueToken
+    {
+        std::string_view raw;
+        Location location;
+        typename G::ValueType value;
+
+        [[nodiscard]] operator typename G::ValueType()
+        {
+            return this->value;
+        }
+
+        ValueToken(std::string_view raw, Location location, typename G::ValueType &&value) : raw(raw), location(location), value(std::move(value)) {}
+    };
+
+    template<IGrammar G>
+    class TransductorAccessor
+    {
+        std::vector<ValueToken<G> *> const &value_tokens_;
+
+    public:
+        [[nodiscard]] typename G::ValueType &operator[](std::size_t i)
+        {
+            return this->value_tokens_[i]->value;
+        }
+
+        [[nodiscard]] ValueToken<G> &operator()(std::size_t i)
+        {
+            return *this->value_tokens_[i];
+        }
+
+        explicit TransductorAccessor(std::vector<ValueToken<G>*> const &value_tokens) : value_tokens_(value_tokens) {}
     };
 
     /**
@@ -184,7 +251,12 @@ namespace bf
      */
     struct DebugSymbol
     {
-        char const *debug_name = "Generic Symbol";
+        [[nodiscard]] virtual char const *GetDebugName() const noexcept
+        {
+            return "Generic Debug Symbol";
+        }
+
+        virtual ~DebugSymbol() = default;
     };
 
     /**
@@ -220,14 +292,19 @@ namespace bf
         Associativity associativity = Associativity::None;
         typename G::UserDataType user_data;
 
-        std::optional<typename G::ValueType> Reason(Token<G> const &token) const
+        /**
+         * Takes a token and turns it into a value. Default constructs the value if no reasoner is defined.
+         * @param token Token to turn into a value
+         * @return Value
+         */
+        typename G::ValueType Reason(Token<G> const &token) const
         {
             if(this->reasoner_)
             {
                 return this->reasoner_(token);
             }
 
-            return std::nullopt;
+            return {};
         }
 
         virtual std::optional<Token<G>> Lex(std::string_view input) const
@@ -246,6 +323,8 @@ namespace bf
     template<IGrammar G, ctll::fixed_string regex, typename SemanticType = void>
     class DefineTerminal : public Terminal<G>
     {
+        std::string debug_name_ = std::format("T<{}>", utf32_to_string(regex.content, regex.size()));
+
     public:
         SemanticType operator()(typename G::ValueType &value)
         {
@@ -283,6 +362,11 @@ namespace bf
             };
         }
 
+        [[nodiscard]] char const *GetDebugName() const noexcept override
+        {
+            return this->debug_name_.c_str();
+        }
+
         constexpr DefineTerminal(Associativity assoc = bf::None, typename G::UserDataType user_data = {}, typename Terminal<G>::ReasonerType reasoner = nullptr)
         {
             this->associativity = assoc;
@@ -308,7 +392,7 @@ namespace bf
         friend struct LRState<G>;
 
     public:
-        using TransductorType = typename G::ValueType(*)(std::vector<typename G::ValueType> &);
+        using TransductorType = typename G::ValueType(*)(TransductorAccessor<G> &);
 
     protected:
         std::vector<ProductionRule<G>> rules_;
@@ -420,14 +504,14 @@ namespace bf
             return true;
         }
 
-        std::optional<typename G::ValueType> Transduce(std::vector<typename G::ValueType> &args) const
+        typename G::ValueType Transduce(TransductorAccessor<G> &accessor) const
         {
             if(this->transductor_)
             {
-                return std::move(this->transductor_(args));
+                return std::move(this->transductor_(accessor));
             }
 
-            return std::nullopt;
+            return {};
         }
 
         ProductionRule(Terminal<G>       &terminal) : sequence_({ &terminal }) {}
@@ -817,7 +901,13 @@ namespace bf
     class Parser
     {
     public:
-        virtual std::expected<typename G::ValueType, Error> Parse(std::string_view input,  std::vector<Token<G>> *tokens) = 0;
+        struct Result
+        {
+            ValueToken<G> &root;
+            std::list<ValueToken<G>> tree;
+        };
+
+        virtual std::expected<Result, Error> Parse(std::string_view input) const = 0;
 
         virtual ~Parser() = default;
     };
@@ -834,13 +924,59 @@ namespace bf
         std::map<lrstate_id_t, std::map<Terminal<G>*, LRAction<G>>> action_;
         std::map<lrstate_id_t, std::map<NonTerminal<G>*, lrstate_id_t>> goto_;
 
+        [[nodiscard]] LRAction<G> const &LookupAction(lrstate_id_t state, Terminal<G> *lookahead) const
+        {
+            return this->action_.at(state).at(lookahead);
+        }
+
+        [[nodiscard]] lrstate_id_t LookupGoto(lrstate_id_t state, NonTerminal<G> *non_terminal) const
+        {
+            return this->goto_.at(state).at(non_terminal);
+        }
+
         struct ParseStackItem
         {
             lrstate_id_t state;
-            typename G::ValueType value;
+            ValueToken<G> *item = nullptr;
 
-            ParseStackItem(lrstate_id_t state) : state(state) {}
-            ParseStackItem(lrstate_id_t state, typename G::ValueType value) : state(state), value(std::move(value)) {}
+            ParseStackItem(lrstate_id_t state, ValueToken<G> *item = nullptr) : state(state), item(item) {}
+        };
+
+        struct ParseStack
+        {
+            std::vector<ParseStackItem> stack;
+
+            void Push(lrstate_id_t state, ValueToken<G> *item = nullptr)
+            {
+                this->stack.emplace_back(state, item);
+            }
+
+            void Pop(std::size_t count)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    this->stack.pop_back();
+                }
+            }
+
+            ParseStackItem Pop()
+            {
+                ParseStackItem tmp = std::move(this->stack.back());
+
+                this->stack.pop_back();
+
+                return std::move(tmp);
+            }
+
+            [[nodiscard]] lrstate_id_t TopState() const
+            {
+                return this->stack.back().state;
+            }
+
+            ParseStack()
+            {
+                this->Push(0);
+            }
         };
 
         struct Tokenizer
@@ -849,43 +985,19 @@ namespace bf
             std::string_view input;
             std::size_t index = 0;
 
-            std::vector<Token<G>> *tokens;
-
-            std::optional<Token<G>> Peek(lrstate_id_t state = 0, bool permissive = false)
+            std::optional<Token<G>> Peek(lrstate_id_t state = 0)
             {
                 while(this->index < this->input.size() && std::isspace(this->input[this->index])) this->index++;
 
-                // IMPORTANT: No need to check for EOF, because it is checked for by special EOF terminal!
-
-                if(permissive)
+                for(auto terminal : this->parser.action_.at(state) | std::views::keys)
                 {
-                    for(auto terminal : this->parser.grammar_.terminals_)
+                    auto token = terminal->Lex(this->input.substr(this->index));
+                    if(token)
                     {
-                        auto token = terminal->Lex(this->input.substr(this->index));
-                        if(token)
-                        {
-                            token->location.begin += this->index;
-                            token->location.end += this->index;
+                        token->location.begin += this->index;
+                        token->location.end += this->index;
 
-                            return token;
-                        }
-                    }
-
-                    // No token was matched. So we increment the index to skip this character.
-                    index++;
-                }
-                else
-                {
-                    for(auto terminal : this->parser.action_.at(state) | std::views::keys)
-                    {
-                        auto token = terminal->Lex(this->input.substr(this->index));
-                        if(token)
-                        {
-                            token->location.begin += this->index;
-                            token->location.end += this->index;
-
-                            return token;
-                        }
+                        return token;
                     }
                 }
 
@@ -895,13 +1007,9 @@ namespace bf
             void Consume(Token<G> const &token)
             {
                 this->index += token.Size();
-                if(tokens)
-                {
-                    tokens->push_back(token);
-                }
             }
 
-            Tokenizer(SLRParser<G> const &parser, std::string_view input, std::vector<Token<G>> *tokens = nullptr) : parser(parser), input(input), tokens(tokens) {}
+            Tokenizer(SLRParser<G> const &parser, std::string_view input) : parser(parser), input(input) {}
         };
 
         /**
@@ -930,10 +1038,7 @@ namespace bf
          */
         std::optional<Error> BuildParsingTables()
         {
-            std::vector<LRState<G>> states;
-
-            // Generate first state
-            states.clear();
+            std::vector<LRState<G>> states{};
             states.emplace_back(&this->grammar_.root);
 
             // Finite State Machine
@@ -969,63 +1074,62 @@ namespace bf
                 // Create REDUCE/ACCEPT entries in parsing tables
                 for(auto const &item : states[i].kernel_items)
                 {
-                    if(item.Complete())
+                    if(!item.Complete()) continue;
+
+                    for(auto follow_terminal : this->grammar_.follow_[item.rule->non_terminal_])
                     {
-                        for(auto follow_terminal : this->grammar_.follow_[item.rule->non_terminal_])
+                        switch(this->action_[i][follow_terminal].type)
                         {
-                            switch(this->action_[i][follow_terminal].type)
+                            /* SHIFT-REDUCE CONFLICT */
+                            case LRActionType::kShift:
                             {
-                                /* SHIFT-REDUCE CONFLICT */
-                                case LRActionType::kShift:
-                                {
-                                    // Reduce due to higher precedence
-                                    if(item.rule->precedence < follow_terminal->precedence)
-                                    {
-                                        this->action_[i][follow_terminal] = {
-                                            .type = LRActionType::kReduce,
-                                            .rule = item.rule,
-                                        };
-                                        break;
-                                    }
-
-                                    // Shift due to lower precedence
-                                    if(item.rule->precedence > follow_terminal->precedence)
-                                    {
-                                        break;
-                                    }
-
-                                    // Reduce due to associativity rule
-                                    if(follow_terminal->associativity == Associativity::Left)
-                                    {
-                                        this->action_[i][follow_terminal] = {
-                                            .type = LRActionType::kReduce,
-                                            .rule = item.rule,
-                                        };
-                                        break;
-                                    }
-
-                                    // Shift due to associativity rule
-                                    if(follow_terminal->associativity == Right)
-                                    {
-                                        break;
-                                    }
-
-                                    // Unable to resolve conflict
-                                    return GrammarDefinitionError("ShiftReduce");
-                                }
-
-                                case LRActionType::kReduce:
-                                {
-                                    return GrammarDefinitionError("ReduceReduce");
-                                }
-
-                                default:
+                                // Reduce due to higher precedence
+                                if(item.rule->precedence < follow_terminal->precedence)
                                 {
                                     this->action_[i][follow_terminal] = {
                                         .type = LRActionType::kReduce,
                                         .rule = item.rule,
                                     };
+                                    break;
                                 }
+
+                                // Shift due to lower precedence
+                                if(item.rule->precedence > follow_terminal->precedence)
+                                {
+                                    break;
+                                }
+
+                                // Reduce due to associativity rule
+                                if(follow_terminal->associativity == Associativity::Left)
+                                {
+                                    this->action_[i][follow_terminal] = {
+                                        .type = LRActionType::kReduce,
+                                        .rule = item.rule,
+                                    };
+                                    break;
+                                }
+
+                                // Shift due to associativity rule
+                                if(follow_terminal->associativity == Right)
+                                {
+                                    break;
+                                }
+
+                                // Unable to resolve conflict
+                                return GrammarDefinitionError("ShiftReduce");
+                            }
+
+                            case LRActionType::kReduce:
+                            {
+                                return GrammarDefinitionError("ReduceReduce");
+                            }
+
+                            default:
+                            {
+                                this->action_[i][follow_terminal] = {
+                                    .type = LRActionType::kReduce,
+                                    .rule = item.rule,
+                                };
                             }
                         }
                     }
@@ -1035,6 +1139,8 @@ namespace bf
             this->action_[0][this->grammar_.EOS.get()] = {
                 .type = LRActionType::kAccept,
             };
+
+            this->goto_[0][&this->grammar_.root] = 0;
 
             return std::nullopt;
         }
@@ -1054,92 +1160,59 @@ namespace bf
             return this->grammar_;
         }
 
-        std::expected<typename G::ValueType, Error> Parse(std::string_view input, std::vector<Token<G>> *tokens = nullptr) override
+        std::expected<typename Parser<G>::Result, Error> Parse(std::string_view input) const override
         {
-            Tokenizer tokenizer(*this, input, tokens);
+            Tokenizer tokenizer(*this, input);
+            ParseStack stack{};
 
-            std::stack<ParseStackItem> parse_stack;
-            parse_stack.emplace(0);
+            std::list<ValueToken<G>> values;
 
             while(true)
             {
-                lrstate_id_t state = parse_stack.top().state;
-
-                std::optional<Token<G>> lookahead = tokenizer.Peek(state);
+                std::optional<Token<G>> lookahead = tokenizer.Peek(stack.TopState());
                 if(!lookahead)
                 {
-                    // Permissively consume rest of tokens
-                    if(tokens)
-                    {
-                        while(true)
-                        {
-                            lookahead = tokenizer.Peek(0, true);
-                            if(!lookahead) continue;
-                            if(lookahead->terminal == this->grammar_.EOS.get())
-                            {
-                                break;
-                            }
-                            tokenizer.Consume(*lookahead);
-                        }
-                    }
-
                     return std::unexpected(Error{"Unexpected Token!"});
                 }
 
-                LRAction<G> action = this->action_[parse_stack.top().state][lookahead->terminal];
-                switch(action.type)
+                auto &action = this->LookupAction(stack.TopState(), lookahead->terminal);
+                if (action.type == LRActionType::kAccept)
                 {
-                    case LRActionType::kAccept:
+                    return typename Parser<G>::Result{*stack.Pop().item, std::move(values)};
+                }
+                else if (action.type == LRActionType::kShift)
+                {
+                    typename G::ValueType value = std::move(lookahead->terminal->Reason(*lookahead));
+                    auto &value_token = values.emplace_back(lookahead->raw, lookahead->location, std::move(value));
+
+                    stack.Push(action.state, &value_token);
+
+                    tokenizer.Consume(*lookahead);
+                }
+                else if (action.type == LRActionType::kReduce)
+                {
+                    auto sequence_size = action.rule->sequence_.size();
+                    std::vector<ValueToken<G> *> args(sequence_size);
+                    for (int i = 0; i < sequence_size; i++)
                     {
-                        return std::move(parse_stack.top().value);
+                        args[i] = stack.stack.end()[(sequence_size - i) * -1].item;
                     }
+                    stack.Pop(sequence_size);
 
-                    case LRActionType::kShift:
-                    {
-                        std::optional<typename G::ValueType> value = std::move(lookahead->terminal->Reason(*lookahead));
+                    TransductorAccessor<G> accessor{args};
+                    typename G::ValueType value = std::move(action.rule->Transduce(accessor));
+                    Location location{
+                        .begin = args[0]->location.begin,
+                        .end = args[sequence_size - 1]->location.end,
+                    };
+                    auto &value_token = values.emplace_back(lookahead->raw, location, std::move(value));
 
-                        if(value)
-                        {
-                            parse_stack.emplace(action.state, std::move(*value));
-                        }
-                        else
-                        {
-                            parse_stack.emplace(action.state);
-                        }
-
-                        tokenizer.Consume(*lookahead);
-                        break;
-                    }
-
-                    case LRActionType::kReduce:
-                    {
-                        std::vector<typename G::ValueType> args(action.rule->sequence_.size());
-
-                        for(int i = action.rule->sequence_.size() - 1; i >= 0; i--)
-                        {
-                            auto &top = parse_stack.top();
-
-                            args[i] = std::move(top.value);
-
-                            parse_stack.pop();
-                        }
-
-                        std::optional<typename G::ValueType> value = std::move(action.rule->Transduce(args));
-                        if(value)
-                        {
-                            parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_], std::move(*value));
-                        }
-                        else
-                        {
-                            parse_stack.emplace(this->goto_[parse_stack.top().state][action.rule->non_terminal_]);
-                        }
-                        break;
-                    }
-
-                    default:
-                    {
-                        return std::unexpected(ParsingError(lookahead->location, "Unexpected Token"));
-                    }
+                    auto reduce_state = this->LookupGoto(stack.TopState(), action.rule->non_terminal_);
+                    stack.Push(reduce_state, &value_token);
+                }
+                else
+                {
+                    return std::unexpected(ParsingError(lookahead->location, "Unexpected Token"));
                 }
             }
         }
