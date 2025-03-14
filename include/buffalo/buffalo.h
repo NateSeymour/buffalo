@@ -81,7 +81,7 @@ namespace bf
     template<IGrammar G>
     class NonTerminal;
 
-    template<IGrammar G, typename SemanticType>
+    template<IGrammar G, ctll::fixed_string DebugName, typename SemanticType>
     class DefineNonTerminal;
 
     template<IGrammar G>
@@ -150,6 +150,15 @@ namespace bf
         ParsingError(Location location, std::string_view message) : location_(location)
         {
             this->message_ = std::format("{}\n{}", message, location.SnippetString());
+        }
+    };
+
+    class ReduceReduceError : public Error
+    {
+    public:
+        ReduceReduceError(char const *non_terminal_name)
+        {
+            this->message_ = std::format("Grammar contains an irreconcilable reduce-reduce conflict at {} in the following rule:", non_terminal_name);
         }
     };
 
@@ -247,19 +256,6 @@ namespace bf
     };
 
     /**
-     * Struct to hold debug symbol names.
-     */
-    struct DebugSymbol
-    {
-        [[nodiscard]] virtual char const *GetDebugName() const noexcept
-        {
-            return "Generic Debug Symbol";
-        }
-
-        virtual ~DebugSymbol() = default;
-    };
-
-    /**
      * Used by the parser to resolve shift-reduce conflicts when terminals have the same precedence.
      */
     enum Associativity
@@ -273,7 +269,7 @@ namespace bf
      * TERMINAL
      */
     template<IGrammar G>
-    class Terminal : public DebugSymbol
+    class Terminal
     {
         friend class Grammar<G>;
 
@@ -281,14 +277,16 @@ namespace bf
         using ReasonerType = typename G::ValueType(*)(Token<G> const&);
 
     protected:
-        inline static std::size_t counter = 0;
+        std::string name_ = "T<Generic>";
+
+        inline static std::size_t counter_ = 0;
 
         ReasonerType reasoner_ = nullptr;
 
         Terminal() = default;
 
     public:
-        std::size_t precedence = Terminal::counter++;
+        std::size_t precedence = Terminal::counter_++;
         Associativity associativity = Associativity::None;
         typename G::UserDataType user_data;
 
@@ -312,6 +310,11 @@ namespace bf
             return std::nullopt;
         }
 
+        [[nodiscard]] char const *GetName() const noexcept
+        {
+            return this->name_.c_str();
+        }
+
         Terminal(Terminal<G>  &&) = delete;
         Terminal(Terminal<G> const &) = delete;
     };
@@ -323,8 +326,6 @@ namespace bf
     template<IGrammar G, ctll::fixed_string regex, typename SemanticType = void>
     class DefineTerminal : public Terminal<G>
     {
-        std::string debug_name_ = std::format("T<{}>", utf32_to_string(regex.content, regex.size()));
-
     public:
         SemanticType operator()(typename G::ValueType &value)
         {
@@ -362,13 +363,9 @@ namespace bf
             };
         }
 
-        [[nodiscard]] char const *GetDebugName() const noexcept override
-        {
-            return this->debug_name_.c_str();
-        }
-
         constexpr DefineTerminal(Associativity assoc = bf::None, typename G::UserDataType user_data = {}, typename Terminal<G>::ReasonerType reasoner = nullptr)
         {
+            this->name_ = std::format("T<{}>", utf32_to_string(regex.content, regex.size()));
             this->associativity = assoc;
             this->user_data = user_data;
             this->reasoner_ = reasoner;
@@ -395,9 +392,15 @@ namespace bf
         using TransductorType = typename G::ValueType(*)(TransductorAccessor<G> &);
 
     protected:
+        std::string name_ = "N<Generic>";
         std::vector<ProductionRule<G>> rules_;
 
     public:
+        [[nodiscard]] char const *GetName() const noexcept
+        {
+            return this->name_.c_str();
+        }
+
         NonTerminal(NonTerminal  &) = delete;
         NonTerminal(NonTerminal &&) = delete;
 
@@ -410,7 +413,7 @@ namespace bf
     /**
      * DEFINE NON-TERMINAL
      */
-    template<IGrammar G, typename SemanticValue = void>
+    template<IGrammar G, ctll::fixed_string DebugName = "Generic", typename SemanticValue = void>
     class DefineNonTerminal : public NonTerminal<G>
     {
     public:
@@ -432,6 +435,9 @@ namespace bf
         }
 
         DefineNonTerminal() = delete;
+
+        DefineNonTerminal(Terminal<G> &single_terminal) : NonTerminal<G>({single_terminal}) {}
+        DefineNonTerminal(NonTerminal<G> &single_non_terminal) : NonTerminal<G>({single_non_terminal}) {}
 
         DefineNonTerminal(ProductionRule<G> const &rule) : NonTerminal<G>(rule) {}
         DefineNonTerminal(ProductionRuleList<G> const &rule_list) : NonTerminal<G>(rule_list) {}
@@ -1121,7 +1127,7 @@ namespace bf
 
                             case LRActionType::kReduce:
                             {
-                                return GrammarDefinitionError("ReduceReduce");
+                                return ReduceReduceError(item.rule->non_terminal_->GetName());
                             }
 
                             default:

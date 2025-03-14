@@ -27,7 +27,7 @@ bf::DefineTerminal<G, R"(\))"> PAR_CLOSE;
 /*
  * Non-Terminals
  */
-bf::DefineNonTerminal<G> expression
+bf::DefineNonTerminal<G, "expression"> expression
     = bf::PR<G>(NUMBER)<=>[](auto &$) { return $[0]; }
     | (PAR_OPEN + expression + PAR_CLOSE)<=>[](auto &$) { return $[1]; }
     | (expression + OP_EXP + expression)<=>[](auto &$) { return std::pow($[0], $[2]); }
@@ -37,7 +37,7 @@ bf::DefineNonTerminal<G> expression
     | (expression + OP_SUB + expression)<=>[](auto &$) { return $[0] - $[2]; }
     ;
 
-bf::DefineNonTerminal<G> statement
+bf::DefineNonTerminal<G, "statement"> statement
     = bf::PR<G>(expression)<=>[](auto &$)
     {
         return $[0];
