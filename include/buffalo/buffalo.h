@@ -179,7 +179,7 @@ namespace bf
                     }
                 }, rule->sequence_[i]);
 
-                if (i == dot)
+                if (i == dot + 1)
                 {
                     stream << name << " . ";
                 }
@@ -1193,7 +1193,7 @@ namespace bf
                         }
                         else if (conflict.type == LRActionType::kReduce) // REDUCE-REDUCE
                         {
-                            return ReduceReduceError<G>(states[i], conflict.rule, item.rule, follow_terminal);
+                            return ReduceReduceError<G>(states[this->goto_[i][item.rule->non_terminal_]], conflict.rule, item.rule, follow_terminal);
                         }
                     }
                 }
