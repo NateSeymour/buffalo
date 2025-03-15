@@ -163,7 +163,7 @@ namespace bf
     class ReduceReduceError : public Error
     {
     public:
-        ReduceReduceError(ProductionRule<G> const *a, ProductionRule<G> const *b)
+        ReduceReduceError(ProductionRule<G> const *a, ProductionRule<G> const *b, Terminal<G> *lookahead)
         {
             char const *a_name = a->non_terminal_->GetName();
             char const *b_name = b->non_terminal_->GetName();
@@ -194,6 +194,8 @@ namespace bf
 
                 message << "\n";
             }
+
+            message << "With lookahead " << lookahead->GetName() << "\n";
 
             this->message_ = message.str();
         }
@@ -314,7 +316,7 @@ namespace bf
         using ReasonerType = typename G::ValueType(*)(Token<G> const&);
 
     protected:
-        std::string name_ = "T<Generic>";
+        std::string name_ = "\"UNKNOWN\"";
 
         inline static std::size_t counter_ = 0;
 
@@ -402,7 +404,7 @@ namespace bf
 
         constexpr DefineTerminal(Associativity assoc = bf::None, typename G::UserDataType user_data = {}, typename Terminal<G>::ReasonerType reasoner = nullptr)
         {
-            this->name_ = std::format("T<{}>", utf32_to_string(regex.content, regex.size()));
+            this->name_ = std::format("\"{}\"", utf32_to_string(regex.content, regex.size()));
             this->associativity = assoc;
             this->user_data = user_data;
             this->reasoner_ = reasoner;
@@ -429,7 +431,7 @@ namespace bf
         using TransductorType = typename G::ValueType(*)(TransductorAccessor<G> &);
 
     protected:
-        std::string name_ = "N<Generic>";
+        std::string name_ = "unknown";
         std::vector<ProductionRule<G>> rules_;
 
     public:
@@ -443,8 +445,8 @@ namespace bf
 
         NonTerminal() = default;
 
-        NonTerminal(ProductionRule<G> const &rule, std::string name = "N<Generic>") : rules_({rule}), name_(std::move(name)) {}
-        NonTerminal(ProductionRuleList<G> const &rule_list, std::string name = "N<Generic>") : rules_(rule_list.rules), name_(std::move(name)) {}
+        NonTerminal(ProductionRule<G> const &rule, std::string name = "unknown") : rules_({rule}), name_(std::move(name)) {}
+        NonTerminal(ProductionRuleList<G> const &rule_list, std::string name = "unknown") : rules_(rule_list.rules), name_(std::move(name)) {}
     };
 
     /**
@@ -1173,7 +1175,7 @@ namespace bf
                         }
                         else if (conflict.type == LRActionType::kReduce) // REDUCE-REDUCE
                         {
-                            return ReduceReduceError<G>(conflict.rule, item.rule);
+                            return ReduceReduceError<G>(conflict.rule, item.rule, follow_terminal);
                         }
                     }
                 }
