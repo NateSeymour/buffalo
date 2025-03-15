@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <variant>
 #include <vector>
+#include <sstream>
 
 namespace bf
 {
@@ -153,12 +154,41 @@ namespace bf
         }
     };
 
+    template<IGrammar G>
     class ReduceReduceError : public Error
     {
     public:
-        ReduceReduceError(char const *non_terminal_name)
+        ReduceReduceError(ProductionRule<G> const *a, ProductionRule<G> const *b)
         {
-            this->message_ = std::format("Grammar contains an irreconcilable reduce-reduce conflict at {} in the following rule:", non_terminal_name);
+            char const *a_name = a->non_terminal_->GetName();
+            char const *b_name = b->non_terminal_->GetName();
+
+            std::stringstream message;
+            message << std::format("Grammar contains an irreconcilable reduce-reduce conflict between {}/{}.\n", a_name, b_name);
+            message << "The conflict arose in the following two rules:\n";
+
+            for (auto const rule : {a, b})
+            {
+                message << "\t" << rule->non_terminal_->GetName() << " -> ";
+
+                for (auto const &symbol : rule->sequence_)
+                {
+                    char const *name = std::visit(overload{
+                        [](Terminal<G> *terminal)
+                        {
+                            return terminal->GetName();
+                        },
+                        [](NonTerminal<G> *non_terminal)
+                        {
+                            return non_terminal->GetName();
+                        }
+                    }, symbol);
+
+                    message << name << " ";
+                }
+
+                message << "\n";
+            }
         }
     };
 
@@ -459,6 +489,7 @@ namespace bf
         friend struct LRItem<G>;
         friend class Parser<G>;
         friend class SLRParser<G>;
+        friend class ReduceReduceError<G>;
 
     protected:
         typename NonTerminal<G>::TransductorType transductor_ = nullptr;
@@ -1084,59 +1115,58 @@ namespace bf
 
                     for(auto follow_terminal : this->grammar_.follow_[item.rule->non_terminal_])
                     {
-                        switch(this->action_[i][follow_terminal].type)
+                        // There will be no conflict
+                        if (!this->action_[i].contains(follow_terminal))
                         {
-                            /* SHIFT-REDUCE CONFLICT */
-                            case LRActionType::kShift:
-                            {
-                                // Reduce due to higher precedence
-                                if(item.rule->precedence < follow_terminal->precedence)
-                                {
-                                    this->action_[i][follow_terminal] = {
-                                        .type = LRActionType::kReduce,
-                                        .rule = item.rule,
-                                    };
-                                    break;
-                                }
+                            this->action_[i][follow_terminal] = {
+                                .type = LRActionType::kReduce,
+                                .rule = item.rule,
+                            };
+                            continue;
+                        }
 
-                                // Shift due to lower precedence
-                                if(item.rule->precedence > follow_terminal->precedence)
-                                {
-                                    break;
-                                }
-
-                                // Reduce due to associativity rule
-                                if(follow_terminal->associativity == Associativity::Left)
-                                {
-                                    this->action_[i][follow_terminal] = {
-                                        .type = LRActionType::kReduce,
-                                        .rule = item.rule,
-                                    };
-                                    break;
-                                }
-
-                                // Shift due to associativity rule
-                                if(follow_terminal->associativity == Right)
-                                {
-                                    break;
-                                }
-
-                                // Unable to resolve conflict
-                                return GrammarDefinitionError("ShiftReduce");
-                            }
-
-                            case LRActionType::kReduce:
-                            {
-                                return ReduceReduceError(item.rule->non_terminal_->GetName());
-                            }
-
-                            default:
+                        // There will be conflict (FIGHT!)
+                        LRAction<G> conflict = this->action_[i][follow_terminal];
+                        if (conflict.type == LRActionType::kShift) // SHIFT-REDUCE
+                        {
+                            // Reduce due to higher precedence
+                            if(item.rule->precedence < follow_terminal->precedence)
                             {
                                 this->action_[i][follow_terminal] = {
                                     .type = LRActionType::kReduce,
                                     .rule = item.rule,
                                 };
+                                continue;
                             }
+
+                            // Shift due to lower precedence
+                            if(item.rule->precedence > follow_terminal->precedence)
+                            {
+                                continue;
+                            }
+
+                            // Reduce due to associativity rule
+                            if(follow_terminal->associativity == Associativity::Left)
+                            {
+                                this->action_[i][follow_terminal] = {
+                                    .type = LRActionType::kReduce,
+                                    .rule = item.rule,
+                                };
+                                continue;
+                            }
+
+                            // Shift due to associativity rule
+                            if(follow_terminal->associativity == Right)
+                            {
+                                continue;
+                            }
+
+                            // Unable to resolve conflict
+                            return GrammarDefinitionError("ShiftReduce");
+                        }
+                        else if (conflict.type == LRActionType::kReduce) // REDUCE-REDUCE
+                        {
+                            return ReduceReduceError<G>(conflict.rule, item.rule);
                         }
                     }
                 }
