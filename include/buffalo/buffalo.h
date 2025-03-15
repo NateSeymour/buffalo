@@ -406,8 +406,8 @@ namespace bf
 
         NonTerminal() = default;
 
-        NonTerminal(ProductionRule<G> const &rule) : rules_({rule}) {}
-        NonTerminal(ProductionRuleList<G> const &rule_list) : rules_(rule_list.rules) {}
+        NonTerminal(ProductionRule<G> const &rule, std::string name = "N<Generic>") : rules_({rule}), name_(std::move(name)) {}
+        NonTerminal(ProductionRuleList<G> const &rule_list, std::string name = "N<Generic>") : rules_(rule_list.rules), name_(std::move(name)) {}
     };
 
     /**
@@ -436,11 +436,11 @@ namespace bf
 
         DefineNonTerminal() = delete;
 
-        DefineNonTerminal(Terminal<G> &single_terminal) : NonTerminal<G>({single_terminal}) {}
-        DefineNonTerminal(NonTerminal<G> &single_non_terminal) : NonTerminal<G>({single_non_terminal}) {}
+        DefineNonTerminal(Terminal<G> &single_terminal) : NonTerminal<G>({single_terminal}, utf32_to_string(DebugName.content, DebugName.size())) {}
+        DefineNonTerminal(NonTerminal<G> &single_non_terminal) : NonTerminal<G>({single_non_terminal}, utf32_to_string(DebugName.content, DebugName.size())) {}
 
-        DefineNonTerminal(ProductionRule<G> const &rule) : NonTerminal<G>(rule) {}
-        DefineNonTerminal(ProductionRuleList<G> const &rule_list) : NonTerminal<G>(rule_list) {}
+        DefineNonTerminal(ProductionRule<G> const &rule) : NonTerminal<G>(rule, utf32_to_string(DebugName.content, DebugName.size())) {}
+        DefineNonTerminal(ProductionRuleList<G> const &rule_list) : NonTerminal<G>(rule_list, utf32_to_string(DebugName.content, DebugName.size())) {}
     };
 
     /**
