@@ -152,8 +152,8 @@ namespace bf
         {
             std::stringstream mstream;
             mstream << message << "\n";
-            mstream << "\t" << location.SnippetString(10);
-            mstream << "\t" << std::string(10, ' ') << '^' << std::string(location.end - location.begin, '~');
+            mstream << "\t" << location.SnippetString(10) << "\n";
+            mstream << "\t" << std::string(10, ' ') << '^' << std::string(location.end - location.begin, '~') << "\n";
 
             this->message_ = mstream.str();
         }
