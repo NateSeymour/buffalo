@@ -162,8 +162,38 @@ namespace bf
     template<IGrammar G>
     class ReduceReduceError : public Error
     {
+        void AppendRule(std::stringstream &stream, ProductionRule<G> const *rule, int dot = -1)
+        {
+            stream << "\t" << rule->non_terminal_->GetName() << " -> ";
+
+            for (int i = 0; i < rule->sequence_.size(); i++)
+            {
+                char const *name = std::visit(overload{
+                    [](Terminal<G> *terminal)
+                    {
+                        return terminal->GetName();
+                    },
+                    [](NonTerminal<G> *non_terminal)
+                    {
+                        return non_terminal->GetName();
+                    }
+                }, rule->sequence_[i]);
+
+                if (i == dot)
+                {
+                    stream << name << " . ";
+                }
+                else
+                {
+                    stream << name << " ";
+                }
+            }
+
+            stream << "\n";
+        }
+
     public:
-        ReduceReduceError(ProductionRule<G> const *a, ProductionRule<G> const *b, Terminal<G> *lookahead)
+        ReduceReduceError(LRState<G> &state, ProductionRule<G> const *a, ProductionRule<G> const *b, Terminal<G> *lookahead)
         {
             char const *a_name = a->non_terminal_->GetName();
             char const *b_name = b->non_terminal_->GetName();
@@ -174,28 +204,16 @@ namespace bf
 
             for (auto const rule : {a, b})
             {
-                message << "\t" << rule->non_terminal_->GetName() << " -> ";
-
-                for (auto const &symbol : rule->sequence_)
-                {
-                    char const *name = std::visit(overload{
-                        [](Terminal<G> *terminal)
-                        {
-                            return terminal->GetName();
-                        },
-                        [](NonTerminal<G> *non_terminal)
-                        {
-                            return non_terminal->GetName();
-                        }
-                    }, symbol);
-
-                    message << name << " ";
-                }
-
-                message << "\n";
+                this->AppendRule(message, rule);
             }
 
             message << "With lookahead " << lookahead->GetName() << "\n";
+
+            message << "In the state with the following closure:\n";
+            for (LRItem<G> &item : state.GenerateClosure())
+            {
+                this->AppendRule(message, item.rule, static_cast<int>(item.position));
+            }
 
             this->message_ = message.str();
         }
@@ -1175,7 +1193,7 @@ namespace bf
                         }
                         else if (conflict.type == LRActionType::kReduce) // REDUCE-REDUCE
                         {
-                            return ReduceReduceError<G>(conflict.rule, item.rule, follow_terminal);
+                            return ReduceReduceError<G>(states[i], conflict.rule, item.rule, follow_terminal);
                         }
                     }
                 }
