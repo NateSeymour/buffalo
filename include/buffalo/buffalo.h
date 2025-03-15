@@ -116,7 +116,7 @@ namespace bf
         [[nodiscard]] std::string_view SnippetString(std::size_t padding = 10) const
         {
             std::size_t start = std::max(static_cast<std::size_t>(0), this->begin - padding);
-            std::size_t n = this->end - this->begin + padding;
+            std::size_t n = this->end - this->begin + (padding * 2);
 
             return buffer.substr(start, n);
         }
