@@ -189,6 +189,8 @@ namespace bf
 
                 message << "\n";
             }
+
+            this->message_ = message.str();
         }
     };
 
