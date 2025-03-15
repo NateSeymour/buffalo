@@ -150,7 +150,12 @@ namespace bf
     public:
         ParsingError(Location location, std::string_view message) : location_(location)
         {
-            this->message_ = std::format("{}\n{}", message, location.SnippetString());
+            std::stringstream mstream;
+            mstream << message << "\n";
+            mstream << "\t" << location.SnippetString(10);
+            mstream << "\t" << std::string(10, ' ') << '^' << std::string(location.end - location.begin, '~');
+
+            this->message_ = mstream.str();
         }
     };
 
@@ -1210,7 +1215,12 @@ namespace bf
                 std::optional<Token<G>> lookahead = tokenizer.Peek(stack.TopState());
                 if(!lookahead)
                 {
-                    return std::unexpected(Error{"Unexpected Token!"});
+                    Location location = {
+                        .buffer = input,
+                        .begin = tokenizer.index,
+                        .end = tokenizer.index,
+                    };
+                    return std::unexpected(ParsingError{location, "Unexpected Token!"});
                 }
 
                 auto &action = this->LookupAction(stack.TopState(), lookahead->terminal);
