@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(buffalo VERSION 2.0.12)
+project(buffalo VERSION 2.0.13)
 
 set(CMAKE_CXX_STANDARD 23)
 
