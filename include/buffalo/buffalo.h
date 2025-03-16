@@ -16,6 +16,7 @@
 #include <variant>
 #include <vector>
 #include <sstream>
+#include <memory>
 
 namespace bf
 {
@@ -137,10 +138,102 @@ namespace bf
         Error() = default;
     };
 
+    template<IGrammar G>
     class GrammarDefinitionError : public Error
     {
+        static void AppendRule(std::stringstream &stream, ProductionRule<G> const *rule, int dot = -1)
+        {
+            stream << "\t" << rule->non_terminal_->GetName() << " -> ";
+
+            for (int i = 0; i < rule->sequence_.size(); i++)
+            {
+                if (i == dot)
+                {
+                    stream << ". ";
+                }
+
+                char const *name = std::visit(overload{
+                    [](Terminal<G> *terminal)
+                    {
+                        return terminal->GetName();
+                    },
+                    [](NonTerminal<G> *non_terminal)
+                    {
+                        return non_terminal->GetName();
+                    }
+                }, rule->sequence_[i]);
+
+                stream << name << " ";
+
+                if (dot == rule->sequence_.size() && i == rule->sequence_.size() - 1)
+                {
+                    stream << ".";
+                }
+            }
+
+            stream << "\n";
+        }
+
     public:
+        static GrammarDefinitionError ShiftReduce(LRState<G> &state, ProductionRule<G> const *shift, ProductionRule<G> const *reduce, Terminal<G> *lookahead)
+        {
+            char const *shift_name = shift->non_terminal_->GetName();
+            char const *reduce_name = reduce->non_terminal_->GetName();
+
+            std::stringstream message;
+            message << "Grammar contains an irreconcilable shift-reduce conflict between " << shift_name << "/" << reduce_name << ".\n";
+            message << "Shift-reduce conflicts can be solved by:\n";
+            message << "\t1. Refactoring your grammar.\n";
+            message << "\t2. Adding precedence to your terminals.\n";
+            message << "\t3. Adding Associativity to your terminals.\n";
+            message << "The conflict arose in the following two rules:\n";
+
+            for (auto const rule : {shift, reduce})
+            {
+                GrammarDefinitionError::AppendRule(message, rule);
+            }
+
+            message << "With lookahead " << lookahead->GetName() << "\n";
+
+            message << "In the state with the following closure:\n";
+            for (LRItem<G> &item : state.GenerateClosure())
+            {
+                GrammarDefinitionError::AppendRule(message, item.rule, static_cast<int>(item.position));
+            }
+
+            message << "Where the grammar is ambiguous whether to reduce the " << reduce_name << " or shift in " << lookahead->GetName() << "\n";
+
+            return {message.str()};
+        }
+
+        static GrammarDefinitionError ReduceReduce(LRState<G> &state, ProductionRule<G> const *a, ProductionRule<G> const *b, Terminal<G> *lookahead)
+        {
+            char const *a_name = a->non_terminal_->GetName();
+            char const *b_name = b->non_terminal_->GetName();
+
+            std::stringstream message;
+            message << "Grammar contains an irreconcilable reduce-reduce conflict between " << a_name << "/" << b_name << ".\n";
+            message << "Reduce-reduce conflicts are normally solved by refactoring your grammar.\n";
+            message << "The conflict arose in the following two rules:\n";
+
+            for (auto const rule : {a, b})
+            {
+                GrammarDefinitionError::AppendRule(message, rule);
+            }
+
+            message << "With lookahead " << lookahead->GetName() << "\n";
+
+            message << "In the state with the following closure:\n";
+            for (LRItem<G> &item : state.GenerateClosure())
+            {
+                GrammarDefinitionError::AppendRule(message, item.rule, static_cast<int>(item.position));
+            }
+
+            return {message.str()};
+        }
+
         GrammarDefinitionError(std::string message) : Error(std::move(message)) {}
+        GrammarDefinitionError() : Error("Unknown Grammar Definition Error") {}
     };
 
     class ParsingError : public Error
@@ -156,66 +249,6 @@ namespace bf
             mstream << "\t" << std::string(10, ' ') << '^' << std::string(location.end - location.begin, '~') << "\n";
 
             this->message_ = mstream.str();
-        }
-    };
-
-    template<IGrammar G>
-    class ReduceReduceError : public Error
-    {
-        void AppendRule(std::stringstream &stream, ProductionRule<G> const *rule, int dot = -1)
-        {
-            stream << "\t" << rule->non_terminal_->GetName() << " -> ";
-
-            for (int i = 0; i < rule->sequence_.size(); i++)
-            {
-                char const *name = std::visit(overload{
-                    [](Terminal<G> *terminal)
-                    {
-                        return terminal->GetName();
-                    },
-                    [](NonTerminal<G> *non_terminal)
-                    {
-                        return non_terminal->GetName();
-                    }
-                }, rule->sequence_[i]);
-
-                if (i == dot + 1)
-                {
-                    stream << name << " . ";
-                }
-                else
-                {
-                    stream << name << " ";
-                }
-            }
-
-            stream << "\n";
-        }
-
-    public:
-        ReduceReduceError(LRState<G> &state, ProductionRule<G> const *a, ProductionRule<G> const *b, Terminal<G> *lookahead)
-        {
-            char const *a_name = a->non_terminal_->GetName();
-            char const *b_name = b->non_terminal_->GetName();
-
-            std::stringstream message;
-            message << std::format("Grammar contains an irreconcilable reduce-reduce conflict between {}/{}.\n", a_name, b_name);
-            message << "The conflict arose in the following two rules:\n";
-
-            for (auto const rule : {a, b})
-            {
-                this->AppendRule(message, rule);
-            }
-
-            message << "With lookahead " << lookahead->GetName() << "\n";
-
-            message << "In the state with the following closure:\n";
-            for (LRItem<G> &item : state.GenerateClosure())
-            {
-                this->AppendRule(message, item.rule, static_cast<int>(item.position));
-            }
-
-            this->message_ = message.str();
         }
     };
 
@@ -516,7 +549,7 @@ namespace bf
         friend struct LRItem<G>;
         friend class Parser<G>;
         friend class SLRParser<G>;
-        friend class ReduceReduceError<G>;
+        friend class GrammarDefinitionError<G>;
 
     protected:
         typename NonTerminal<G>::TransductorType transductor_ = nullptr;
@@ -1189,11 +1222,11 @@ namespace bf
                             }
 
                             // Unable to resolve conflict
-                            return GrammarDefinitionError("ShiftReduce");
+                            return GrammarDefinitionError<G>::ShiftReduce(states[i], conflict.rule, item.rule, follow_terminal);
                         }
                         else if (conflict.type == LRActionType::kReduce) // REDUCE-REDUCE
                         {
-                            return ReduceReduceError<G>(states[this->goto_[i][item.rule->non_terminal_]], conflict.rule, item.rule, follow_terminal);
+                            return GrammarDefinitionError<G>::ReduceReduce(states[i], conflict.rule, item.rule, follow_terminal);
                         }
                     }
                 }
