@@ -539,6 +539,24 @@ namespace bf
     template<IGrammar G>
     using Symbol = std::variant<Terminal<G>*, NonTerminal<G>*>;
 
+    template<IGrammar G>
+    struct ProductionRuleModifiers
+    {
+        std::set<Terminal<G>*> short_circuit{};
+
+        bool operator==(ProductionRuleModifiers const &other) const
+        {
+            return this->short_circuit == other.short_circuit;
+        }
+
+        ProductionRuleModifiers &operator+=(ProductionRuleModifiers const &other)
+        {
+            this->short_circuit.insert(other.short_circuit.begin(), other.short_circuit.end());
+
+            return *this;
+        }
+    };
+
     /*
      * PRODUCTION RULES
      */
@@ -558,6 +576,8 @@ namespace bf
 
         NonTerminal<G> *non_terminal_ = nullptr;
 
+        ProductionRuleModifiers<G> mod_{};
+
     public:
         ProductionRule &operator+(Terminal<G> &rhs)
         {
@@ -573,6 +593,19 @@ namespace bf
             return *this;
         }
 
+        /**
+         * "Short Circuits" the rule for a particular lookahead. This will ensure that this rule is not considered
+         * when a specific lookahead is ahead.
+         * @param lookahead Lookahead to short circuit on
+         * @return
+         */
+        ProductionRule &Short(Terminal<G> &lookahead)
+        {
+            this->mod_.short_circuit.insert(&lookahead);
+
+            return *this;
+        }
+
         ProductionRule &operator<=>(typename NonTerminal<G>::TransductorType tranductor)
         {
             this->transductor_ = tranductor;
@@ -582,17 +615,19 @@ namespace bf
 
         bool operator==(ProductionRule<G> const &other) const
         {
-            if(this->non_terminal_ && other.non_terminal_)
-            {
-                if(this->non_terminal_ != other.non_terminal_) return false;
-            }
-            else if(this->non_terminal_ != other.non_terminal_)
+            // NonTerminal
+            if(this->non_terminal_ != other.non_terminal_)
             {
                 return false;
             }
 
-            if(this->sequence_.size() != other.sequence_.size()) return false;
+            if (this->mod_ != other.mod_)
+            {
+                return false;
+            }
 
+            // Sequence
+            if(this->sequence_.size() != other.sequence_.size()) return false;
             for(auto const &[first, second] : std::views::zip(this->sequence_, other.sequence_))
             {
                 if(first != second) return false;
@@ -854,6 +889,7 @@ namespace bf
     struct LRItem
     {
         ProductionRule<G> const *rule;
+        ProductionRuleModifiers<G> mod;
         std::size_t position;
 
         [[nodiscard]] bool Complete() const
@@ -876,7 +912,7 @@ namespace bf
             return *this->rule == *other.rule && this->position == other.position;
         }
 
-        LRItem(ProductionRule<G> const *rule, int position = 0) : rule(rule), position(position) {}
+        LRItem(ProductionRule<G> const *rule, int position = 0) : rule(rule), mod(rule->mod_), position(position) {}
 
         LRItem() = delete;
     };
@@ -902,7 +938,14 @@ namespace bf
                 if(closure[i].Complete()) continue;
 
                 std::visit(overload{
-                    [](Terminal<G> *terminal) { /* Do Nothing */ },
+                    [&](Terminal<G> *terminal)
+                    {
+                        // Remove this rule if it is present it item's short-circuit list
+                        if (closure[i].mod.short_circuit.contains(terminal))
+                        {
+                            closure.erase(closure.begin() + i);
+                        }
+                    },
                     [&](NonTerminal<G> *non_terminal)
                     {
                         if(closed_nonterminals.contains(non_terminal)) return;
@@ -910,7 +953,8 @@ namespace bf
 
                         for(auto const &rule : non_terminal->rules_)
                         {
-                            closure.emplace_back(&rule);
+                            auto &new_item = closure.emplace_back(&rule);
+                            new_item.mod += closure[i].mod;
                         }
                     }
                 }, closure[i].NextSymbol());
@@ -927,7 +971,7 @@ namespace bf
 
             for(auto const &item : closure)
             {
-                if(item.Complete()) continue;
+                if (item.Complete()) continue;
 
                 transitions[item.NextSymbol()].kernel_items.push_back(item.Advance());
             }
