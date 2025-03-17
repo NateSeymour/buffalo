@@ -909,7 +909,7 @@ namespace bf
 
         bool operator==(LRItem const &other) const
         {
-            return *this->rule == *other.rule && this->position == other.position;
+            return *this->rule == *other.rule && this->mod == other.mod && this->position == other.position;
         }
 
         LRItem(ProductionRule<G> const *rule, int position = 0) : rule(rule), mod(rule->mod_), position(position) {}
