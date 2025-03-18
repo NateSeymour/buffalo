@@ -943,7 +943,7 @@ namespace bf
                         // Remove this rule if it is present it item's short-circuit list
                         if (closure[i].mod.short_circuit.contains(terminal))
                         {
-                            closure.erase(closure.begin() + i);
+                            closure.erase(closure.begin() + (i--));
                         }
                     },
                     [&](NonTerminal<G> *non_terminal)
