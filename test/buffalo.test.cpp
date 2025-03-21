@@ -28,20 +28,17 @@ bf::DefineTerminal<G, R"(\))"> PAR_CLOSE;
  * Non-Terminals
  */
 bf::DefineNonTerminal<G, "expression"> expression
-    = bf::PR<G>(NUMBER)<=>[](auto &$) { return $[0]; }
-    | (PAR_OPEN + expression + PAR_CLOSE)<=>[](auto &$) { return $[1]; }
-    | (expression + OP_EXP + expression)<=>[](auto &$) { return std::pow($[0], $[2]); }
-    | (expression + OP_MUL + expression)<=>[](auto &$) { return $[0] * $[2]; }
-    | (expression + OP_DIV + expression)<=>[](auto &$) { return $[0] / $[2]; }
-    | (expression + OP_ADD + expression)<=>[](auto &$) { return $[0] + $[2]; }
-    | (expression + OP_SUB + expression)<=>[](auto &$) { return $[0] - $[2]; }
+    = bf::PR<G>(NUMBER)
+    | (PAR_OPEN + expression + PAR_CLOSE)<=>[](auto &$) { $ = $[1]; }
+    | (expression + OP_EXP + expression)<=>[](auto &$) { $ = std::pow($[0], $[2]); }
+    | (expression + OP_MUL + expression)<=>[](auto &$) { $ = $[0] * $[2]; }
+    | (expression + OP_DIV + expression)<=>[](auto &$) { $ = $[0] / $[2]; }
+    | (expression + OP_ADD + expression)<=>[](auto &$) { $ = $[0] + $[2]; }
+    | (expression + OP_SUB + expression)<=>[](auto &$) { $ = $[0] - $[2]; }
     ;
 
 bf::DefineNonTerminal<G, "statement"> statement
-    = bf::PR<G>(expression)<=>[](auto &$)
-    {
-        return $[0];
-    }
+    = bf::PR<G>(expression)
     ;
 
 TEST(Parser, Construction)
@@ -57,5 +54,5 @@ TEST(Parser, Evaluation)
     auto res = parser.Parse("3 * 3 + 4^2 - (9 / 3)");
     ASSERT_TRUE(res.has_value());
 
-    ASSERT_EQ(res->root.value, 22.0);
+    ASSERT_EQ(res->GetValue(), 22.0);
 }

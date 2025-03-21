@@ -42,6 +42,17 @@ namespace bf
     template<class... Ts>
     overload(Ts...) -> overload<Ts...>;
 
+    /**
+     * Empty dummy struct to act as default for Grammar user data.
+     */
+    struct Dummy {};
+
+    /**
+     * Helper for turning ctll string literals into std::string.
+     * @param utf32
+     * @param size
+     * @return
+     */
     [[nodiscard]] inline std::string utf32_to_string(char32_t const *utf32, std::size_t size)
     {
         std::string buffer(size, '0');
@@ -71,7 +82,16 @@ namespace bf
     class Grammar;
 
     template<IGrammar G>
+    class ValueTokenReference;
+
+    template<IGrammar G>
+    class ValueTokenAccessor;
+
+    template<IGrammar G>
     class ProductionRule;
+
+    template<IGrammar G>
+    class ProductionRuleList;
 
     template<IGrammar G>
     class Terminal;
@@ -252,23 +272,6 @@ namespace bf
     };
 
     /**
-     * PRODUCTION RULE LIST
-     * @tparam G
-     */
-    template<IGrammar G>
-    struct ProductionRuleList
-    {
-        std::vector<ProductionRule<G>> rules;
-
-        ProductionRuleList &operator|(ProductionRule<G> const &rule)
-        {
-            this->rules.push_back(rule);
-
-            return *this;
-        }
-    };
-
-    /**
      * TOKEN
      * Resolved by the lexxer at scan time.
      */
@@ -305,48 +308,70 @@ namespace bf
     };
 
     template<IGrammar G>
-    class ParsedValueStore
+    class ValueTokenStore
     {
+        friend class ValueTokenReference<G>;
+        friend class ValueTokenAccessor<G>;
+        friend class SLRParser<G>;
+
         std::vector<ValueToken<G>> values_;
+
+    public:
+        ValueTokenStore()
+        {
+            this->values_.reserve(100);
+        }
     };
 
     template<IGrammar G>
     class ValueTokenReference
     {
         std::size_t index_;
-        std::shared_ptr<ParsedValueStore<G>> store_;
+        std::shared_ptr<ValueTokenStore<G>> store_;
 
     public:
-        [[nodiscard]] ValueToken<G> const &operator->()
+        [[nodiscard]] ValueToken<G> &GetValueToken() const
         {
-            return this->store_.values_[this->index_];
+            return this->store_->values_[this->index_];
         }
+
+        [[nodiscard]] typename G::ValueType &GetValue() const
+        {
+            return this->store_->values_[this->index_].value;
+        }
+
+        ValueTokenReference(std::size_t index, std::shared_ptr<ValueTokenStore<G>> store) : index_(index), store_(store) {}
     };
 
     template<IGrammar G>
-    class TransductorAccessor
+    class ValueTokenAccessor
     {
-        std::size_t index_;
-        std::shared_ptr<ParsedValueStore<G>> store_;
+        std::span<std::size_t> indices_;
+        std::shared_ptr<ValueTokenStore<G>> store_;
+
+        std::string_view raw_;
+        Location location_;
 
     public:
         [[nodiscard]] typename G::ValueType &operator[](std::size_t i)
         {
-            return this->store_->values_[this->index_ + i]->value;
+            return this->store_->values_[this->indices_[i]].value;
         }
 
-        [[nodiscard]] ValueToken<G> &operator()(std::size_t i)
+        [[nodiscard]] ValueTokenReference<G> operator()(std::size_t i)
         {
-            return this->store_->values_[this->index_ + i];
+            return this->store_->values_[this->indices_[i]];
         }
 
-        explicit TransductorAccessor(std::size_t index, std::shared_ptr<ParsedValueStore<G>> store) : index_(index), store_(store) {}
-    };
+        ValueTokenAccessor &operator=(typename G::ValueType value)
+        {
+            this->store_->values_.emplace_back(this->raw_, this->location_, std::move(value));
 
-    /**
-     * Empty dummy struct to act as default for Grammar user data.
-     */
-    struct Dummy {};
+            return *this;
+        }
+
+        ValueTokenAccessor(std::span<std::size_t> indices, std::shared_ptr<ValueTokenStore<G>> store) : indices_(indices), store_(store) {}
+    };
 
     /**
      * GRAMMAR DEFINITION
@@ -498,7 +523,7 @@ namespace bf
         friend struct LRState<G>;
 
     public:
-        using TransductorType = typename G::ValueType(*)(TransductorAccessor<G> &);
+        using TransductorType = void(*)(ValueTokenAccessor<G> &);
 
     protected:
         std::string name_ = "unknown";
@@ -655,22 +680,45 @@ namespace bf
             return true;
         }
 
-        typename G::ValueType Transduce(TransductorAccessor<G> &accessor) const
+        void Transduce(ValueTokenAccessor<G> &$) const
         {
             if(this->transductor_)
             {
-                return std::move(this->transductor_(accessor));
+                this->transductor_($);
             }
-
-            return {};
+            // If no transductor is defined, return the first element in sequence.
+            else if (this->sequence_.size() > 0)
+            {
+                $ = $[0];
+            }
         }
 
         ProductionRule(Terminal<G>       &terminal) : sequence_({ &terminal }) {}
         ProductionRule(NonTerminal<G> &nonterminal) : sequence_({ &nonterminal }) {}
     };
 
+    /**
+     * Helper for defining single-element production rules.
+     */
     template<IGrammar G>
     using PR = ProductionRule<G>;
+
+    /**
+     * PRODUCTION RULE LIST
+     * @tparam G
+     */
+    template<IGrammar G>
+    struct ProductionRuleList
+    {
+        std::vector<ProductionRule<G>> rules;
+
+        ProductionRuleList &operator|(ProductionRule<G> const &rule)
+        {
+            this->rules.push_back(rule);
+
+            return *this;
+        }
+    };
 
     /*
      * GRAMMAR
@@ -1061,13 +1109,7 @@ namespace bf
     class Parser
     {
     public:
-        struct Result
-        {
-            ValueToken<G> &root;
-            std::list<ValueToken<G>> tree;
-        };
-
-        virtual std::expected<Result, Error> Parse(std::string_view input) const = 0;
+        virtual std::expected<ValueTokenReference<G>, Error> Parse(std::string_view input) const = 0;
 
         virtual ~Parser() = default;
     };
@@ -1094,58 +1136,13 @@ namespace bf
             return this->goto_.at(state).at(non_terminal);
         }
 
-        struct ParseStackItem
-        {
-            lrstate_id_t state;
-            ValueToken<G> *item = nullptr;
-
-            ParseStackItem(lrstate_id_t state, ValueToken<G> *item = nullptr) : state(state), item(item) {}
-        };
-
-        struct ParseStack
-        {
-            std::vector<ParseStackItem> stack;
-
-            void Push(lrstate_id_t state, ValueToken<G> *item = nullptr)
-            {
-                this->stack.emplace_back(state, item);
-            }
-
-            void Pop(std::size_t count)
-            {
-                for (int i = 0; i < count; i++)
-                {
-                    this->stack.pop_back();
-                }
-            }
-
-            ParseStackItem Pop()
-            {
-                ParseStackItem tmp = std::move(this->stack.back());
-
-                this->stack.pop_back();
-
-                return std::move(tmp);
-            }
-
-            [[nodiscard]] lrstate_id_t TopState() const
-            {
-                return this->stack.back().state;
-            }
-
-            ParseStack()
-            {
-                this->Push(0);
-            }
-        };
-
         struct Tokenizer
         {
             SLRParser<G> const &parser;
             std::string_view input;
             std::size_t index = 0;
 
-            std::optional<Token<G>> Peek(lrstate_id_t state = 0)
+            std::optional<Token<G>> Next(lrstate_id_t state = 0)
             {
                 while(this->index < this->input.size() && std::isspace(this->input[this->index])) this->index++;
 
@@ -1157,16 +1154,13 @@ namespace bf
                         token->location.begin += this->index;
                         token->location.end += this->index;
 
+                        this->index += token->Size();
+
                         return token;
                     }
                 }
 
                 return std::nullopt;
-            }
-
-            void Consume(Token<G> const &token)
-            {
-                this->index += token.Size();
             }
 
             Tokenizer(SLRParser<G> const &parser, std::string_view input) : parser(parser), input(input) {}
@@ -1319,16 +1313,24 @@ namespace bf
             return this->grammar_;
         }
 
-        std::expected<typename Parser<G>::Result, Error> Parse(std::string_view input) const override
+        std::expected<ValueTokenReference<G>, Error> Parse(std::string_view input) const override
         {
+            constexpr int expected_max_pr_length = 50;
+
             Tokenizer tokenizer(*this, input);
-            ParseStack stack{};
 
-            std::list<ValueToken<G>> values;
+            std::vector<lrstate_id_t> stack;
+            stack.reserve(expected_max_pr_length);
+            stack.push_back(0);
 
+            std::vector<std::size_t> value_stack;
+            value_stack.reserve(expected_max_pr_length);
+
+            auto store = std::make_shared<ValueTokenStore<G>>();
+
+            std::optional<Token<G>> lookahead = tokenizer.Next(stack.back());
             while(true)
             {
-                std::optional<Token<G>> lookahead = tokenizer.Peek(stack.TopState());
                 if(!lookahead)
                 {
                     Location location = {
@@ -1339,44 +1341,37 @@ namespace bf
                     return std::unexpected(ParsingError{location, "Unexpected Token!"});
                 }
 
-                auto &action = this->LookupAction(stack.TopState(), lookahead->terminal);
+                auto &action = this->LookupAction(stack.back(), lookahead->terminal);
                 if (action.type == LRActionType::kAccept)
                 {
-                    return typename Parser<G>::Result{*stack.Pop().item, std::move(values)};
+                    return ValueTokenReference<G>(store->values_.size() - 1, store);
                 }
                 else if (action.type == LRActionType::kShift)
                 {
                     typename G::ValueType value = std::move(lookahead->terminal->Reason(*lookahead));
-                    auto &value_token = values.emplace_back(lookahead->raw, lookahead->location, std::move(value));
+                    store->values_.emplace_back(lookahead->raw, lookahead->location, std::move(value));
 
-                    stack.Push(action.state, &value_token);
+                    stack.push_back(action.state);
+                    value_stack.push_back(store->values_.size() - 1);
 
-                    tokenizer.Consume(*lookahead);
+                    lookahead = tokenizer.Next(stack.back());
                 }
                 else if (action.type == LRActionType::kReduce)
                 {
                     auto sequence_size = action.rule->sequence_.size();
-                    std::vector<ValueToken<G> *> args(sequence_size);
-                    for (int i = 0; i < sequence_size; i++)
-                    {
-                        args[i] = stack.stack.end()[(sequence_size - i) * -1].item;
-                    }
-                    stack.Pop(sequence_size);
+                    ValueTokenAccessor<G> accessor{std::span{value_stack.end() - sequence_size, sequence_size}, store};
 
-                    TransductorAccessor<G> accessor{args};
-                    typename G::ValueType value = std::move(action.rule->Transduce(accessor));
-                    Location location{
-                        .begin = args[0]->location.begin,
-                        .end = args[sequence_size - 1]->location.end,
-                    };
-                    auto &value_token = values.emplace_back(lookahead->raw, location, std::move(value));
+                    action.rule->Transduce(accessor);
 
-                    auto reduce_state = this->LookupGoto(stack.TopState(), action.rule->non_terminal_);
-                    stack.Push(reduce_state, &value_token);
+                    stack.erase(stack.end() - sequence_size, stack.end());
+                    stack.push_back(this->LookupGoto(stack.back(), action.rule->non_terminal_));
+
+                    value_stack.erase(value_stack.end() - sequence_size, value_stack.end());
+                    value_stack.push_back(store->values_.size() - 1);
                 }
                 else
                 {
-                    return std::unexpected(ParsingError(lookahead->location, "Unexpected Token"));
+                    return std::unexpected(ParsingError(lookahead->location, "Unexpected Token!"));
                 }
             }
         }
