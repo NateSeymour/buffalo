@@ -22,7 +22,6 @@ namespace bf
 {
     /*
      * Helper for std::visit provided by Andreas Fertig.
-     * Apple-Clang 15 isn't C++23 compliant enough for the prettier solution, so C++17 style it is.
      * https://andreasfertig.blog/2023/07/visiting-a-stdvariant-safely/
      */
     template<class...>
@@ -306,22 +305,42 @@ namespace bf
     };
 
     template<IGrammar G>
+    class ParsedValueStore
+    {
+        std::vector<ValueToken<G>> values_;
+    };
+
+    template<IGrammar G>
+    class ValueTokenReference
+    {
+        std::size_t index_;
+        std::shared_ptr<ParsedValueStore<G>> store_;
+
+    public:
+        [[nodiscard]] ValueToken<G> const &operator->()
+        {
+            return this->store_.values_[this->index_];
+        }
+    };
+
+    template<IGrammar G>
     class TransductorAccessor
     {
-        std::vector<ValueToken<G> *> const &value_tokens_;
+        std::size_t index_;
+        std::shared_ptr<ParsedValueStore<G>> store_;
 
     public:
         [[nodiscard]] typename G::ValueType &operator[](std::size_t i)
         {
-            return this->value_tokens_[i]->value;
+            return this->store_->values_[this->index_ + i]->value;
         }
 
         [[nodiscard]] ValueToken<G> &operator()(std::size_t i)
         {
-            return *this->value_tokens_[i];
+            return this->store_->values_[this->index_ + i];
         }
 
-        explicit TransductorAccessor(std::vector<ValueToken<G>*> const &value_tokens) : value_tokens_(value_tokens) {}
+        explicit TransductorAccessor(std::size_t index, std::shared_ptr<ParsedValueStore<G>> store) : index_(index), store_(store) {}
     };
 
     /**
