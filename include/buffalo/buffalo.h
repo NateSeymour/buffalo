@@ -457,7 +457,7 @@ namespace bf
      * DEFINE TERMINAL
      * @tparam G
      */
-    template<IGrammar G, ctll::fixed_string regex, typename SemanticType = void>
+    template<IGrammar G, ctll::fixed_string regex, typename SemanticType = Dummy>
     class DefineTerminal : public Terminal<G>
     {
     public:
@@ -535,25 +535,13 @@ namespace bf
     /**
      * DEFINE NON-TERMINAL
      */
-    template<IGrammar G, ctll::fixed_string DebugName = "Generic", typename SemanticValue = void>
+    template<IGrammar G, ctll::fixed_string DebugName = "Generic", typename SemanticValue = Dummy>
     class DefineNonTerminal : public NonTerminal<G>
     {
     public:
-        SemanticValue operator()(typename G::ValueType &value)
+        SemanticValue &operator()(typename G::ValueType &value)
         {
-            if constexpr(std::variant_size<typename G::ValueType>::value != 0)
-            {
-                if(!std::holds_alternative<SemanticValue>(value))
-                {
-                    throw std::runtime_error("failed to convert type");
-                }
-
-                return std::move(std::get<SemanticValue>(value));
-            }
-            else
-            {
-                return std::move(reinterpret_cast<SemanticValue>(value));
-            }
+            return std::get<SemanticValue>(value);
         }
 
         DefineNonTerminal() = delete;
