@@ -461,21 +461,9 @@ namespace bf
     class DefineTerminal : public Terminal<G>
     {
     public:
-        SemanticType operator()(typename G::ValueType &value)
+        SemanticType &operator()(typename G::ValueType &value)
         {
-            if constexpr(std::variant_size<typename G::ValueType>::value != 0)
-            {
-                if(!std::holds_alternative<SemanticType>(value))
-                {
-                    throw std::runtime_error("failed to convert type");
-                }
-
-                return std::move(std::get<SemanticType>(value));
-            }
-            else
-            {
-                return std::move(reinterpret_cast<SemanticType>(value));
-            }
+            return std::get<SemanticType>(value);
         }
 
         std::optional<Token<G>> Lex(std::string_view input) const override
