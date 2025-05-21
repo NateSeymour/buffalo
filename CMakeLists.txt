@@ -31,13 +31,10 @@ if(BUFFALO_ENABLE_TESTS)
 
     add_executable(buffalo-test
             test/buffalo.test.cpp
+            test/parsers/calculator.cpp
+            test/parsers/Parser.h
+            test/parsers/list.cpp
     )
     target_link_libraries(buffalo-test PRIVATE buffalo GTest::gtest_main)
     target_include_directories(buffalo-test PRIVATE include)
 endif()
-
-# Examples
-add_executable(example-calculator
-        examples/calculator.cpp
-)
-target_link_libraries(example-calculator PRIVATE buffalo)

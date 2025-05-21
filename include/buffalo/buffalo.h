@@ -559,23 +559,27 @@ namespace bf
     template<IGrammar G>
     using Symbol = std::variant<Terminal<G>*, NonTerminal<G>*>;
 
+    /*
+     * PRODUCTION RULE MODIFIERS
+     */
+
+    /**
+     * ProductionRule attribute class for creating short circuits.
+     * @tparam G
+     */
     template<IGrammar G>
-    struct ProductionRuleModifiers
+    struct Short
     {
-        std::set<Terminal<G>*> short_circuit{};
+        std::set<Terminal<G> *> terminals;
 
-        bool operator==(ProductionRuleModifiers const &other) const
-        {
-            return this->short_circuit == other.short_circuit;
-        }
-
-        ProductionRuleModifiers &operator+=(ProductionRuleModifiers const &other)
-        {
-            this->short_circuit.insert(other.short_circuit.begin(), other.short_circuit.end());
-
-            return *this;
-        }
+        Short(Terminal<G> *terminal) : terminals(terminal) {}
+        Short(std::span<Terminal<G>*> terminals) : terminals(terminals) {}
     };
+
+    /**
+     * Marks a ProductionRule unproductive, so that no
+     */
+    struct Unproductive {};
 
     /*
      * PRODUCTION RULES
@@ -596,7 +600,9 @@ namespace bf
 
         NonTerminal<G> *non_terminal_ = nullptr;
 
-        ProductionRuleModifiers<G> mod_{};
+        std::set<Terminal<G>*> short_circuit_;
+
+        struct {} attr_;
 
     public:
         ProductionRule &operator+(Terminal<G> &rhs)
