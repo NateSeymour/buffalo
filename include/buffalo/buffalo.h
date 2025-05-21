@@ -360,7 +360,7 @@ namespace bf
 
         [[nodiscard]] ValueTokenReference<G> operator()(std::size_t i)
         {
-            return this->store_->values_[this->indices_[i]];
+            return {this->indices_[i], this->store_};
         }
 
         ValueTokenAccessor &operator=(typename G::ValueType value)
